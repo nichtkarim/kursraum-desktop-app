@@ -119,6 +119,7 @@ class CourseLibrary {
   }
 
   enqueue(event, absolute) {
+    if (path.basename(absolute).startsWith('.kursraum-sync-')) return;
     const token = this.generation;
     this.queue = this.queue.catch(() => {}).then(() => { if (token === this.generation) return this.applyEvent(event, absolute); }).catch(error => {
       this.error = `Dateiaktualisierung fehlgeschlagen: ${error.message}`;
@@ -254,6 +255,23 @@ class CourseLibrary {
     const page = Math.max(0, Math.min(100000, Number.parseInt(args.page, 10) || 0));
     const pageSize = 60;
     return { total: results.length, page, pageSize, items: results.slice(page * pageSize, (page + 1) * pageSize).map(file => this.publicFile(file)) };
+  }
+
+  nextVideo(id) {
+    const current = this.fileById.get(id);
+    if (!current || current.kind !== 'video') throw new Error('Video nicht gefunden.');
+    const course = this.courses.get(idFor(this.root, 'course', current.relative.split('/')[0]));
+    if (!course) throw new Error('Kurs nicht gefunden.');
+    // Follow the chapter list, with Kursstart first, independently of UI filters/pagination.
+    const chapters = ['', ...[...course.chapters.keys()].sort(naturalCompare)];
+    let found = false;
+    for (const chapter of chapters) {
+      for (const file of course.byChapter.get(chapter) || []) {
+        if (found && file.kind === 'video') return { ...this.publicFile(file), courseName: course.name };
+        if (file.id === id) found = true;
+      }
+    }
+    return null;
   }
 
   search(args = {}) {

@@ -43,7 +43,7 @@ async function scanTree(root, onProgress = () => {}, cancelled = () => false, st
     try {
       for await (const entry of handle) {
         if (cancelled()) throw new Error('SCAN_CANCELLED');
-        if (entry.isSymbolicLink()) continue;
+        if (entry.isSymbolicLink() || entry.name.startsWith('.kursraum-sync-')) continue;
         const absolute = path.join(absoluteDir, entry.name);
         if (entry.isDirectory()) {
           stack.push(absolute);

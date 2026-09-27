@@ -4,7 +4,7 @@ const path = require('node:path');
 class Store {
   constructor(filename) {
     this.filename = filename;
-    this.data = { root: null, settings: { theme: 'dark', fontScale: 1, locale: 'de' }, files: {}, chapters: {} };
+    this.data = { root: null, nextcloud: null, settings: { theme: 'dark', fontScale: 1, locale: 'de' }, files: {}, chapters: {} };
     this.timer = null;
     this.writing = Promise.resolve();
   }
@@ -14,6 +14,11 @@ class Store {
       const raw = JSON.parse(await fs.readFile(this.filename, 'utf8'));
       if (!raw || typeof raw !== 'object') return;
       this.data.root = typeof raw.root === 'string' ? raw.root : null;
+      const cloud = raw.nextcloud;
+      if (cloud && ['serverUrl', 'username', 'remotePath', 'localRoot'].every(key => typeof cloud[key] === 'string')) {
+        this.data.nextcloud = { serverUrl: cloud.serverUrl, username: cloud.username, remotePath: cloud.remotePath, localRoot: cloud.localRoot,
+          autoSync: cloud.autoSync === true, encryptedPassword: typeof cloud.encryptedPassword === 'string' ? cloud.encryptedPassword : '', lastSync: cloud.lastSync || null };
+      }
       this.data.settings = { ...this.data.settings, ...(raw.settings || {}) };
       this.data.files = raw.files && typeof raw.files === 'object' ? raw.files : {};
       this.data.chapters = raw.chapters && typeof raw.chapters === 'object' ? raw.chapters : {};

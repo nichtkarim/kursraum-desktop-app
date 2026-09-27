@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ArrowLeft, BookOpen, Bookmark, Check, CheckCircle2, ChevronRight, Download, ExternalLink,
+  ArrowLeft, BookOpen, Bookmark, Cloud, Check, CheckCircle2, ChevronRight, Download, ExternalLink,
   File as FileIcon, FileText, Folder, FolderOpen, GraduationCap, HardDrive, Heart,
   Image as ImageIcon, Layers3, LayoutGrid, Menu, Moon, Play, RotateCw, Search,
   Settings2, Star, Sun, Video, X
 } from 'lucide-react';
 import Preview from './Preview.jsx';
+import Reader from './Reader.jsx';
+import NextcloudDialog from './NextcloudDialog.jsx';
 
 const api = window.kursraum;
 const number = new Intl.NumberFormat('de-DE');
@@ -79,6 +81,7 @@ export default function App() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [autoPlayVideoId, setAutoPlayVideoId] = useState(null);
   const [filter, setFilter] = useState('all');
   const [searchInput, setSearchInput] = useState('');
   const [query, setQuery] = useState('');
@@ -87,10 +90,14 @@ export default function App() {
   const [error, setError] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [nextcloudOpen, setNextcloudOpen] = useState(false);
+  const [nextcloud, setNextcloud] = useState({ configured: false, authenticated: false, running: false });
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch(e => setError(e.message));
+    api.nextcloudStatus().then(setNextcloud).catch(e => setError(e.message));
     const unsubscribe = api.onEvent(event => {
+      if (event.type === 'nextcloud') setNextcloud(event.status);
       if (event.type === 'progress') setOverview(previous => ({ ...previous, scanning: event.scanning, progress: event.progress }));
       if (event.type === 'changed') setReload(value => value + 1);
       if (event.type === 'error') { setError(event.message); setReload(value => value + 1); }
@@ -158,22 +165,33 @@ export default function App() {
     const result = await api.chooseRoot();
     if (result) { setView('home'); setCourseId(null); setSelectedFile(null); setSearchInput(''); setReload(value => value + 1); }
   });
-  const updateFile = (file, field) => handleError(async () => {
-    const state = await api.setFileState(file.id, { [field]: !file.state?.[field] });
+  const saveFileState = async (file, patch) => {
+    const state = await api.setFileState(file.id, patch);
     setItems(current => current.map(item => item.id === file.id ? { ...item, state } : item));
     setSelectedFile(current => current?.id === file.id ? { ...current, state } : current);
-  });
+  };
+  const updateFile = (file, field) => handleError(() => saveFileState(file, { [field]: !file.state?.[field] }));
+  const markVideoWatched = file => file.state?.read ? Promise.resolve() : saveFileState(file, { read: true });
+  const playNextVideo = useCallback(file => {
+    setAutoPlayVideoId(file.id);
+    setSelectedFile(file);
+    setCourseId(file.courseId);
+    setChapterPath(file.chapterPath);
+    setView('course');
+    setSearchInput('');
+    setFilter('all');
+  }, []);
   const updateChapter = patch => handleError(async () => {
     const state = await api.setChapterState(courseId, chapterPath, patch);
     setCourse(current => current ? { ...current, chapters: current.chapters.map(ch => ch.path === chapterPath ? { ...ch, state } : ch) } : current);
   });
   const updateSetting = (key, value) => handleError(async () => setSettings(await api.setSetting(key, value)));
-  const openFile = file => { setSelectedFile(file); setSidebarOpen(false); };
+  const openFile = file => { setAutoPlayVideoId(null); setSelectedFile(file); setSidebarOpen(false); };
   const action = (method, file) => handleError(() => api[method](file.id));
 
-  return <div className={`app-shell ${selectedFile ? 'reader-visible' : ''}`}>
+  return <div className={`app-shell ${selectedFile && selectedFile.kind !== 'video' ? 'reader-visible' : ''}`}>
     <aside className={`sidebar ${sidebarOpen ? 'mobile-open' : ''}`}>
-      <div className="sidebar-header"><span className="brand-emblem"><Layers3 size={22} /></span><div><strong>Kursraum</strong><small>DEINE LERNBIBLIOTHEK</small></div><button className="icon-button mobile-close" aria-label="Menü schließen" onClick={() => setSidebarOpen(false)}><X size={19} /></button></div>
+      <div className="sidebar-header"><img className="brand-icon" src={`${import.meta.env.BASE_URL}kursraum-icon.svg`} alt="" /><div><strong>Kursraum</strong><small>DEINE LERNBIBLIOTHEK</small></div><button className="icon-button mobile-close" aria-label="Menü schließen" onClick={() => setSidebarOpen(false)}><X size={19} /></button></div>
       <div className="sidebar-scroll">
         <div className="nav-label">BIBLIOTHEK</div>
         <button type="button" className={`nav-item ${view === 'home' ? 'selected' : ''}`} onClick={() => { setView('home'); setSearchInput(''); setSidebarOpen(false); }}><LayoutGrid size={18} /> Alle Kurse <span>{overview.courses.length}</span></button>
@@ -185,7 +203,7 @@ export default function App() {
         </button>)}
         {!overview.courses.length && <p className="sidebar-hint">Hier erscheinen deine Kurse nach der Ordnerauswahl.</p>}
       </div>
-      <div className="sidebar-bottom"><div className="local-badge"><span className="local-dot" /> 100 % lokal · Keine Cloud</div><button className="sidebar-folder" onClick={pickRoot}><FolderOpen size={17} /><span title={overview.root || ''}>{overview.root ? 'Ordner wechseln' : 'Ordner auswählen'}</span><ChevronRight size={16} /></button></div>
+      <div className="sidebar-bottom"><div className="local-badge"><span className="local-dot" /> {nextcloud.configured ? 'Nextcloud verbunden' : 'Lokal auf deinem Gerät'}</div><button type="button" className="sidebar-cloud" onClick={() => setNextcloudOpen(true)}><Cloud size={18} /><span>{nextcloud.running ? 'Wird synchronisiert …' : 'Nextcloud'}</span><ChevronRight size={16} /></button><button className="sidebar-folder" onClick={pickRoot}><FolderOpen size={17} /><span title={overview.root || ''}>{overview.root ? 'Ordner wechseln' : 'Ordner auswählen'}</span><ChevronRight size={16} /></button></div>
     </aside>
 
     {sidebarOpen && <button className="mobile-scrim" aria-label="Menü schließen" onClick={() => setSidebarOpen(false)} />}
@@ -199,7 +217,7 @@ export default function App() {
       {overview.scanning && <div className="scan-status"><span className="scan-spinner" /><span>Ordner wird indexiert · {number.format(overview.progress?.files || 0)} Dateien · {number.format(overview.progress?.folders || 0)} Ordner</span></div>}
       {error && <div className="error-bar" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Fehler schließen"><X size={17} /></button></div>}
       <div className="workspace"><main className="content-area">
-        {!overview.root && <div className="welcome"><div className="welcome-art"><BookOpen size={64} strokeWidth={1.2} /><span className="welcome-art-ring" /></div><span className="eyebrow">DEIN WISSEN. DEIN ORT.</span><h1>Alle deine Kurse.<br /><span>An einem Ort.</span></h1><p>Wähle einmal deinen Ordner „Kurse“. Wir machen aus deiner vorhandenen Ordnerstruktur eine übersichtliche Lernplattform – vollständig lokal.</p><button className="primary-button" onClick={pickRoot}><FolderOpen size={18} /> Kursordner auswählen <ChevronRight size={17} /></button><div className="welcome-foot">Keine Anmeldung · Keine Uploads · Jederzeit wechselbar</div></div>}
+        {!overview.root && <div className="welcome"><div className="welcome-art"><BookOpen size={64} strokeWidth={1.2} /><span className="welcome-art-ring" /></div><span className="eyebrow">DEIN WISSEN. DEIN ORT.</span><h1>Alle deine Kurse.<br /><span>An einem Ort.</span></h1><p>Wähle einmal deinen Ordner „Kurse“. Wir machen aus deiner vorhandenen Ordnerstruktur eine übersichtliche Lernplattform. Optional verbindest du deine Kurse direkt mit Nextcloud.</p><button className="primary-button" onClick={pickRoot}><FolderOpen size={18} /> Kursordner auswählen <ChevronRight size={17} /></button><button type="button" className="cloud-welcome-button" onClick={() => setNextcloudOpen(true)}><Cloud size={18} /> Mit Nextcloud verbinden</button><div className="welcome-foot">Offline lernen · Nextcloud optional · Jederzeit wechselbar</div></div>}
         {overview.root && isSearching && <><div className="page-heading compact"><span className="eyebrow">BIBLIOTHEK DURCHSUCHEN</span><h1>Suchergebnisse</h1><p>„{query}“ in Kursen, Kapiteln und Dateinamen</p></div><FileFilters value={filter} onChange={setFilter} /><MaterialList title="Passende Materialien" subtitle={`${number.format(shownCourses.length)} passende Kurse · Dateinamen und Kapitelpfade`} items={items} total={total} loading={loading} onOpen={openFile} onToggleFavorite={file => updateFile(file, 'favorite')} onMore={() => setPage(n => n + 1)} />{shownCourses.length > 0 && <section className="search-courses"><h2>Passende Kurse</h2><div className="course-grid">{shownCourses.map((item, i) => <CourseCard key={item.id} course={item} index={i} onClick={() => openCourse(item.id)} />)}</div></section>}</>}
         {overview.root && !isSearching && view === 'home' && <><div className="hero"><div className="hero-copy"><span className="hero-kicker"><span className="hero-kicker-dot" /> DEINE LERNBIBLIOTHEK</span><h1>Was möchtest du<br /><em>heute lernen?</em></h1><p>Deine Materialien. Dein Tempo. Alles an einem Ort.</p><div className="hero-stats"><span><BookOpen size={16} /> {overview.courses.length} Kurse</span><span><FileText size={16} /> {number.format(overview.courses.reduce((a, c) => a + c.fileCount, 0))} Materialien</span></div></div><div className="hero-visual"><div className="hero-circle hero-circle-one" /><div className="hero-circle hero-circle-two" /><div className="hero-tile"><GraduationCap size={48} strokeWidth={1.1} /><span>LEARN AT YOUR PACE</span></div></div></div>
           <div className="section-top overview-section-top"><div><span className="eyebrow">DEINE SAMMLUNG</span><h2>Alle Kurse</h2><p>Direkt aus deinem Kursordner importiert</p></div><button className="secondary-button" onClick={pickRoot}><FolderOpen size={16} /> Ordner wechseln</button></div>
@@ -214,9 +232,11 @@ export default function App() {
               <section className="notes-section"><div><h3>Deine Notizen</h3><p>Privat gespeichert, nur auf diesem Gerät.</p></div><textarea value={note} placeholder="Notizen zu diesem Kapitel …" maxLength={8000} onChange={e => setNote(e.target.value)} onBlur={() => { if (chapter && note !== (chapter.state?.note || '')) updateChapter({ note }); }} /><small>Speichert beim Verlassen des Feldes.</small></section>
             </div></div></>}
       </main>
-      {selectedFile && <aside className="reader" aria-label="Dateivorschau"><div className="reader-top"><span className="eyebrow">MATERIAL ANSEHEN</span><button className="icon-button" onClick={() => setSelectedFile(null)} aria-label="Vorschau schließen"><X size={20} /></button></div><div className="reader-heading"><div className={`material-icon kind-${selectedFile.kind}`}>{React.createElement(kindIcons[selectedFile.kind] || FileIcon, { size: 22 })}</div><div><h2 title={selectedFile.name}>{selectedFile.name}</h2><p>{kindNames[selectedFile.kind]} · {formatBytes(selectedFile.size)} · {date.format(new Date(selectedFile.modified))}</p></div></div><div className="reader-actions"><button className={selectedFile.state?.read ? 'active' : ''} onClick={() => updateFile(selectedFile, 'read')} title="Als gelesen markieren"><CheckCircle2 size={17} /> {selectedFile.state?.read ? 'Gelesen' : 'Als gelesen'}</button><button className={selectedFile.state?.favorite ? 'active' : ''} onClick={() => updateFile(selectedFile, 'favorite')} title="Favorit"><Star size={17} fill={selectedFile.state?.favorite ? 'currentColor' : 'none'} /></button><button onClick={() => action('download', selectedFile)} title="Herunterladen / Kopie speichern"><Download size={17} /></button><button onClick={() => action('open', selectedFile)} title="In Standard-App öffnen"><ExternalLink size={17} /></button></div><div className="reader-body"><Preview file={selectedFile} /></div><div className="reader-footer"><button onClick={() => action('reveal', selectedFile)}><Folder size={16} /> Im Ordner anzeigen</button><span>Lokale Datei</span></div></aside>}
+      {selectedFile && <Reader video={selectedFile.kind === 'video'} onClose={() => setSelectedFile(null)}><div className="reader-top"><span className="eyebrow">{selectedFile.kind === 'video' ? 'VIDEO ANSEHEN' : 'MATERIAL ANSEHEN'}</span><button className="icon-button" onClick={() => setSelectedFile(null)} aria-label="Vorschau schließen"><X size={20} /></button></div><div className="reader-heading"><div className={`material-icon kind-${selectedFile.kind}`}>{React.createElement(kindIcons[selectedFile.kind] || FileIcon, { size: 22 })}</div><div><h2 id="reader-title" title={selectedFile.name}>{selectedFile.name}</h2><p>{kindNames[selectedFile.kind]} · {formatBytes(selectedFile.size)} · {date.format(new Date(selectedFile.modified))}</p></div></div><div className="reader-actions"><button className={selectedFile.state?.read ? 'active' : ''} onClick={() => updateFile(selectedFile, 'read')} title="Als gelesen markieren"><CheckCircle2 size={17} /> {selectedFile.state?.read ? 'Gelesen' : 'Als gelesen'}</button><button className={selectedFile.state?.favorite ? 'active' : ''} onClick={() => updateFile(selectedFile, 'favorite')} title="Favorit"><Star size={17} fill={selectedFile.state?.favorite ? 'currentColor' : 'none'} /></button><button onClick={() => action('download', selectedFile)} title="Herunterladen / Kopie speichern"><Download size={17} /></button><button onClick={() => action('open', selectedFile)} title="In Standard-App öffnen"><ExternalLink size={17} /></button></div><div className="reader-body"><Preview file={selectedFile} autoPlay={autoPlayVideoId === selectedFile.id} onWatched={markVideoWatched} onNext={playNextVideo} /></div><div className="reader-footer"><button onClick={() => action('reveal', selectedFile)}><Folder size={16} /> Im Ordner anzeigen</button><span>Lokale Datei</span></div></Reader>}
       </div>
     </div>
-    {settingsOpen && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><div className="settings-modal" role="dialog" aria-modal="true" aria-label="Einstellungen"><div className="modal-heading"><div><span className="eyebrow">DEIN KURSRAUM</span><h2>Einstellungen</h2></div><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Schließen"><X size={20} /></button></div><div className="setting-block"><h3>Darstellung</h3><p>Wähle ein angenehmes Erscheinungsbild.</p><div className="theme-options"><button className={settings.theme === 'dark' ? 'selected' : ''} onClick={() => updateSetting('theme', 'dark')}><Moon size={20} /> Dunkel</button><button className={settings.theme === 'light' ? 'selected' : ''} onClick={() => updateSetting('theme', 'light')}><Sun size={20} /> Hell</button></div></div><div className="setting-block"><h3>Schriftgröße</h3><p>Gilt für die Benutzeroberfläche.</p><input aria-label="Schriftgröße" type="range" min="0.85" max="1.3" step="0.05" value={settings.fontScale} onChange={e => updateSetting('fontScale', Number(e.target.value))} /><span>{Math.round(settings.fontScale * 100)} %</span></div><div className="setting-block"><h3>Sprache</h3><p>Deutsch · weitere Sprachen sind derzeit nicht verfügbar.</p></div><div className="setting-local"><HardDrive size={18} /> Dateien und Notizen bleiben auf deinem Computer.</div></div></div>}
+    {nextcloudOpen && <NextcloudDialog status={nextcloud} localRoot={overview.root} onStatus={setNextcloud}
+      onConfigured={() => { setView('home'); setCourseId(null); setSelectedFile(null); setSearchInput(''); setReload(value => value + 1); }} onClose={() => setNextcloudOpen(false)} />}
+    {settingsOpen && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><div className="settings-modal" role="dialog" aria-modal="true" aria-label="Einstellungen"><div className="modal-heading"><div><span className="eyebrow">DEIN KURSRAUM</span><h2>Einstellungen</h2></div><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Schließen"><X size={20} /></button></div><div className="setting-block"><h3>Darstellung</h3><p>Wähle ein angenehmes Erscheinungsbild.</p><div className="theme-options"><button className={settings.theme === 'dark' ? 'selected' : ''} onClick={() => updateSetting('theme', 'dark')}><Moon size={20} /> Dunkel</button><button className={settings.theme === 'light' ? 'selected' : ''} onClick={() => updateSetting('theme', 'light')}><Sun size={20} /> Hell</button></div></div><div className="setting-block"><h3>Schriftgröße</h3><p>Gilt für die Benutzeroberfläche.</p><input aria-label="Schriftgröße" type="range" min="0.85" max="1.3" step="0.05" value={settings.fontScale} onChange={e => updateSetting('fontScale', Number(e.target.value))} /><span>{Math.round(settings.fontScale * 100)} %</span></div><div className="setting-block"><h3>Nextcloud</h3><p>Kursdateien direkt mit deiner Nextcloud synchronisieren.</p><button type="button" className="cloud-secondary" onClick={() => { setSettingsOpen(false); setNextcloudOpen(true); }}><Cloud size={18} /> Nextcloud einrichten</button></div><div className="setting-block"><h3>Sprache</h3><p>Deutsch · weitere Sprachen sind derzeit nicht verfügbar.</p></div><div className="setting-local"><HardDrive size={18} /> Offline verfügbar · Notizen bleiben auf diesem Gerät.</div></div></div>}
   </div>;
 }

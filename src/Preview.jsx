@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import VideoPlayer from './VideoPlayer.jsx';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import mammoth from 'mammoth/mammoth.browser';
@@ -107,10 +108,10 @@ function PreviewError({ message }) {
   return <div className="preview-placeholder"><FileWarning size={26} /><span>{message}</span></div>;
 }
 
-export default function Preview({ file }) {
+export default function Preview({ file, autoPlay, onWatched, onNext }) {
   if (!file) return null;
   if (file.kind === 'image') return <div className="media-preview"><img src={api.mediaUrl(file.id)} alt={file.name} /></div>;
-  if (file.kind === 'video') return <div className="media-preview"><video key={file.id} controls preload="metadata" src={api.mediaUrl(file.id)}>Dieses Videoformat wird von der Browser-Engine nicht unterstützt.</video><p>Falls das Video nicht startet, öffne es mit der Standard-App.</p></div>;
+  if (file.kind === 'video') return <VideoPlayer key={file.id} file={file} autoPlay={autoPlay} onWatched={onWatched} onNext={onNext} />;
   if (file.kind === 'pdf') return <PdfPreview key={file.id} file={file} />;
   if (['text', 'markdown', 'docx'].includes(file.kind)) return <DocumentPreview key={file.id} file={file} />;
   return <PreviewError message="Für diesen Dateityp gibt es keine integrierte Vorschau. Du kannst die Datei öffnen oder herunterladen." />;

@@ -1,0 +1,87 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Play, SkipForward } from 'lucide-react';
+
+const api = window.kursraum;
+
+export default function VideoPlayer({ file, autoPlay, onWatched, onNext }) {
+  const video = useRef(null);
+  const [ended, setEnded] = useState(false);
+  const [next, setNext] = useState({ loading: false, file: null, error: '' });
+  const [countdown, setCountdown] = useState(null);
+  const [playError, setPlayError] = useState('');
+  const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    if (!autoPlay) return;
+    let alive = true;
+    video.current.play().catch(error => {
+      if (alive && error.name !== 'AbortError') {
+        setPlayError('Automatischer Start nicht möglich. Starte das Video über die Wiedergabetaste.');
+      }
+    });
+    return () => { alive = false; };
+  }, [autoPlay]);
+
+  useEffect(() => {
+    if (!ended) return;
+    let alive = true;
+    setNext({ loading: true, file: null, error: '' });
+    api.nextVideo(file.id).then(nextFile => {
+      if (!alive) return;
+      setNext({ loading: false, file: nextFile, error: '' });
+      setCountdown(nextFile ? 10 : null);
+    }).catch(error => {
+      if (alive) setNext({ loading: false, file: null, error: `Nächstes Video konnte nicht geladen werden: ${error.message}` });
+    });
+    return () => { alive = false; };
+  }, [ended, file.id]);
+
+  useEffect(() => {
+    if (countdown === null || !next.file) return;
+    if (countdown === 0) {
+      setCountdown(null);
+      onNext(next.file);
+      return;
+    }
+    const timer = setTimeout(() => setCountdown(value => value === null ? null : value - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown, next.file, onNext]);
+
+  const stopCountdown = () => {
+    setCountdown(null);
+    setEnded(false);
+  };
+  const finish = () => {
+    setEnded(true);
+    setSaveError('');
+    onWatched(file).catch(error => setSaveError(`Lesestatus konnte nicht gespeichert werden: ${error.message}`));
+  };
+
+  return <div className={`media-preview video-preview ${ended ? 'is-ended' : ''}`}>
+    <video ref={video} controls playsInline preload="metadata" src={api.mediaUrl(file.id)}
+      aria-label={file.name} onEnded={finish}
+      onPlay={() => { stopCountdown(); setPlayError(''); }} onSeeking={stopCountdown}
+      onError={() => { stopCountdown(); setPlayError('Dieses Video konnte nicht abgespielt werden. Öffne es bei Bedarf mit der Standard-App.'); }}>
+      Dieses Videoformat wird von der Browser-Engine nicht unterstützt.
+    </video>
+    {playError && <p className="video-message" role="alert">{playError}</p>}
+    {saveError && <p className="video-message" role="alert">{saveError}</p>}
+    {ended && <div className="video-up-next">
+      {next.loading ? <p role="status">Nächstes Video wird gesucht …</p>
+        : next.error ? <p role="alert">{next.error}</p>
+        : next.file ? <>
+          <span className="video-countdown" aria-hidden="true">{countdown ?? <SkipForward size={24} />}</span>
+          <div className="video-next-details">
+            <p role="status">{countdown === null ? 'Automatische Wiedergabe angehalten' : `Nächstes Video in ${countdown} Sekunden`}</p>
+            <strong>{next.file.name}</strong>
+            <small>{next.file.chapterPath.split('/').join(' / ') || 'Kursstart'}</small>
+          </div>
+          <div className="video-next-actions">
+            <button type="button" className="primary-button" onClick={() => { setCountdown(null); onNext(next.file); }}><Play size={16} /> Jetzt abspielen</button>
+            {countdown !== null && <button type="button" className="video-cancel" onClick={() => setCountdown(null)}>Abbrechen</button>}
+          </div>
+        </> : <p role="status">Du hast das letzte Video dieses Kurses erreicht.</p>}
+    </div>}
+    {!ended && !playError && <p>Nach dem Ansehen automatisch als gelesen markiert · Nächstes Video nach 10 Sekunden</p>}
+  </div>;
+}

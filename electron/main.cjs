@@ -1,10 +1,11 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, shell, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, shell, session, safeStorage } = require('electron');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { Readable } = require('node:stream');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const { Store } = require('./store.cjs');
+const { Nextcloud } = require('./nextcloud.cjs');
 const { CourseLibrary } = require('./library.cjs');
 const { parseRange } = require('./range.cjs');
 const { isInside } = require('./scanner.cjs');
@@ -16,6 +17,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'course-file', privileges: {
 let window;
 let store;
 let library;
+let nextcloud;
 let quitting = false;
 const devUrl = process.env.VITE_DEV_SERVER_URL;
 const mime = {
@@ -58,6 +60,17 @@ function registerMediaProtocol() {
 }
 
 function registerIpc() {
+  ipcMain.handle('nextcloud:status', () => nextcloud.status());
+  ipcMain.handle('nextcloud:login', (_event, credentials) => nextcloud.login(credentials));
+  ipcMain.handle('nextcloud:browse', (_event, remotePath) => nextcloud.browse(remotePath));
+  ipcMain.handle('nextcloud:chooseLocal', async () => {
+    const choice = await dialog.showOpenDialog(window, { title: 'Lokalen Kursordner für Nextcloud wählen', defaultPath: library.root || app.getPath('documents'), properties: ['openDirectory', 'createDirectory'] });
+    return choice.canceled || !choice.filePaths[0] ? null : nextcloud.chooseLocal(choice.filePaths[0]);
+  });
+  ipcMain.handle('nextcloud:configure', (_event, options) => nextcloud.configure(options));
+  ipcMain.handle('nextcloud:sync', () => nextcloud.start());
+  ipcMain.handle('nextcloud:cancel', () => nextcloud.cancel());
+  ipcMain.handle('nextcloud:disconnect', () => nextcloud.disconnect());
   ipcMain.handle('library:chooseRoot', async () => {
     const choice = await dialog.showOpenDialog(window, { title: 'Kursordner „Kurse“ wählen', properties: ['openDirectory'] });
     if (choice.canceled || !choice.filePaths[0]) return null;
@@ -66,6 +79,7 @@ function registerIpc() {
   ipcMain.handle('library:overview', () => library.overview());
   ipcMain.handle('library:course', (_event, id) => library.course(id));
   ipcMain.handle('library:listFiles', (_event, args) => library.listFiles(args));
+  ipcMain.handle('library:nextVideo', (_event, id) => library.nextVideo(id));
   ipcMain.handle('library:search', (_event, args) => library.search(args));
   ipcMain.handle('library:favorites', (_event, args) => library.favorites(args));
   ipcMain.handle('library:rescan', async () => { await library.rescan(); return library.overview(); });
@@ -100,6 +114,7 @@ function createWindow() {
   window = new BrowserWindow({
     width: 1440, height: 900, minWidth: 760, minHeight: 600,
     backgroundColor: '#10131d', title: 'Kursraum',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true
@@ -131,6 +146,10 @@ app.whenReady().then(async () => {
   library = new CourseLibrary(store, message => {
     if (window && !window.isDestroyed()) window.webContents.send('library:event', message);
   });
+  nextcloud = new Nextcloud({ store, library, safeStorage, dataDirectory: app.getPath('userData'), emit: message => {
+    if (window && !window.isDestroyed()) window.webContents.send('library:event', message);
+  } });
+  nextcloud.initialize();
   registerMediaProtocol();
   registerIpc();
   createWindow();
@@ -144,7 +163,10 @@ app.on('before-quit', event => {
   if (quitting || !library) return;
   event.preventDefault();
   quitting = true;
-  void Promise.allSettled([library.close(), store.flush()]).finally(() => app.quit());
+  void (async () => {
+    await nextcloud.close();
+    await Promise.allSettled([library.close(), store.flush()]);
+  })().finally(() => app.quit());
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

@@ -1,11 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const api = Object.freeze({
+  nextcloudStatus: () => ipcRenderer.invoke('nextcloud:status'),
+  nextcloudLogin: credentials => ipcRenderer.invoke('nextcloud:login', credentials),
+  nextcloudBrowse: remotePath => ipcRenderer.invoke('nextcloud:browse', remotePath),
+  nextcloudChooseLocal: () => ipcRenderer.invoke('nextcloud:chooseLocal'),
+  nextcloudConfigure: options => ipcRenderer.invoke('nextcloud:configure', options),
+  nextcloudSync: () => ipcRenderer.invoke('nextcloud:sync'),
+  nextcloudCancel: () => ipcRenderer.invoke('nextcloud:cancel'),
+  nextcloudDisconnect: () => ipcRenderer.invoke('nextcloud:disconnect'),
   overview: () => ipcRenderer.invoke('library:overview'),
   chooseRoot: () => ipcRenderer.invoke('library:chooseRoot'),
   rescan: () => ipcRenderer.invoke('library:rescan'),
   course: id => ipcRenderer.invoke('library:course', id),
   listFiles: options => ipcRenderer.invoke('library:listFiles', options),
+  nextVideo: id => ipcRenderer.invoke('library:nextVideo', id),
   search: options => ipcRenderer.invoke('library:search', options),
   favorites: options => ipcRenderer.invoke('library:favorites', options),
   setFileState: (id, patch) => ipcRenderer.invoke('library:setFileState', id, patch),
