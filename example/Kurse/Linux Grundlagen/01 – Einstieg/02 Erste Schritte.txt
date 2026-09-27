@@ -1,0 +1,5 @@
+Hallo!
+
+Nutze den Kursraum, um deine Lernmaterialien zu finden.
+
+Übung: Erstelle eine Datei und beobachte, wie sie automatisch in der App erscheint.
