@@ -1,0 +1,101 @@
+{
+  "format": "kursraum-roadmap",
+  "schemaVersion": 1,
+  "title": "Vom Einstieg zum eigenen Server",
+  "nodes": [
+    {
+      "id": "linux",
+      "courseName": "Linux Grundlagen",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "goal": "Mit dem Terminal arbeiten",
+      "duration": 90,
+      "notes": "",
+      "required": true,
+      "milestone": false,
+      "checkpoint": false,
+      "startDate": "",
+      "expanded": false
+    },
+    {
+      "id": "network",
+      "courseName": "Netzwerke verstehen",
+      "position": {
+        "x": 350,
+        "y": 0
+      },
+      "goal": "Verbindungen verstehen",
+      "duration": 120,
+      "notes": "",
+      "required": true,
+      "milestone": false,
+      "checkpoint": false,
+      "startDate": "",
+      "expanded": false
+    },
+    {
+      "id": "server",
+      "courseName": "Server im Alltag",
+      "position": {
+        "x": 700,
+        "y": 0
+      },
+      "goal": "Einen Server betreiben",
+      "duration": 180,
+      "notes": "",
+      "required": true,
+      "milestone": true,
+      "checkpoint": false,
+      "startDate": "",
+      "expanded": false
+    },
+    {
+      "id": "web",
+      "courseName": "Webdesign kompakt",
+      "position": {
+        "x": 350,
+        "y": 330
+      },
+      "goal": "Eine eigene Website gestalten",
+      "duration": 120,
+      "notes": "",
+      "required": false,
+      "milestone": false,
+      "checkpoint": false,
+      "startDate": "",
+      "expanded": false
+    }
+  ],
+  "edges": [
+    {
+      "id": "linux-network",
+      "source": "linux",
+      "target": "network",
+      "label": "Grundlagen"
+    },
+    {
+      "id": "network-server",
+      "source": "network",
+      "target": "server",
+      "label": "Netzwerke kennen"
+    },
+    {
+      "id": "linux-web",
+      "source": "linux",
+      "target": "web",
+      "label": "Optionaler Seitenpfad"
+    }
+  ],
+  "route": [
+    "linux",
+    "network",
+    "server"
+  ],
+  "viewport": {
+    "x": 20,
+    "y": 20,
+    "zoom": 0.8
+  }
+}

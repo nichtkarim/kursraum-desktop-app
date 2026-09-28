@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Play, SkipForward } from 'lucide-react';
+import { Maximize, Play, SkipForward } from 'lucide-react';
 
 const api = window.kursraum;
 
@@ -10,6 +10,7 @@ export default function VideoPlayer({ file, autoPlay, onWatched, onNext }) {
   const [countdown, setCountdown] = useState(null);
   const [playError, setPlayError] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [fullscreenError, setFullscreenError] = useState('');
 
   useEffect(() => {
     if (!autoPlay) return;
@@ -47,6 +48,16 @@ export default function VideoPlayer({ file, autoPlay, onWatched, onNext }) {
     return () => clearTimeout(timer);
   }, [countdown, next.file, onNext]);
 
+  const toggleFullscreen = async () => {
+    setFullscreenError('');
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await video.current.requestFullscreen();
+    } catch {
+      setFullscreenError('Vollbild konnte nicht geöffnet werden. Bitte erneut versuchen.');
+    }
+  };
+
   const stopCountdown = () => {
     setCountdown(null);
     setEnded(false);
@@ -59,11 +70,13 @@ export default function VideoPlayer({ file, autoPlay, onWatched, onNext }) {
 
   return <div className={`media-preview video-preview ${ended ? 'is-ended' : ''}`}>
     <video ref={video} controls playsInline preload="metadata" src={api.mediaUrl(file.id)}
-      aria-label={file.name} onEnded={finish}
+      aria-label={file.name} onEnded={finish} onDoubleClick={toggleFullscreen}
       onPlay={() => { stopCountdown(); setPlayError(''); }} onSeeking={stopCountdown}
       onError={() => { stopCountdown(); setPlayError('Dieses Video konnte nicht abgespielt werden. Öffne es bei Bedarf mit der Standard-App.'); }}>
       Dieses Videoformat wird von der Browser-Engine nicht unterstützt.
     </video>
+    <div className="video-view-actions"><button type="button" className="video-fullscreen-button" onClick={toggleFullscreen}><Maximize size={17} /> Vollbild</button><span>Auch per Doppelklick · Esc beendet Vollbild</span></div>
+    {fullscreenError && <p className="video-message" role="alert">{fullscreenError}</p>}
     {playError && <p className="video-message" role="alert">{playError}</p>}
     {saveError && <p className="video-message" role="alert">{saveError}</p>}
     {ended && <div className="video-up-next">

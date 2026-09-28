@@ -236,7 +236,7 @@ class CourseLibrary {
     const chapters = [...course.chapters.values()].sort((a, b) => naturalCompare(a.path, b.path));
     if (course.byChapter.has('') || !chapters.length) chapters.unshift({ path: '', name: 'Kursstart', depth: 0, fileCount: (course.byChapter.get('') || []).length, parentPath: '' });
     return { ...this.summary(course), chapters: chapters.map(chapter => ({
-      ...chapter, state: this.store.chapter(idFor(this.root, 'chapter', `${id}:${chapter.path}`))
+      ...chapter, readCount: (course.byChapter.get(chapter.path) || []).filter(file => this.store.file(file.id).read).length, state: this.store.chapter(idFor(this.root, 'chapter', `${id}:${chapter.path}`))
     })) };
   }
 

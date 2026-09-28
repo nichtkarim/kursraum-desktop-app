@@ -4,7 +4,7 @@ const path = require('node:path');
 class Store {
   constructor(filename) {
     this.filename = filename;
-    this.data = { root: null, nextcloud: null, settings: { theme: 'dark', fontScale: 1, locale: 'de' }, files: {}, chapters: {} };
+    this.data = { root: null, nextcloud: null, settings: { theme: 'dark', fontScale: 1, locale: 'de', roadmapReducedMotion: false }, files: {}, chapters: {} };
     this.timer = null;
     this.writing = Promise.resolve();
   }
@@ -35,7 +35,8 @@ class Store {
     if (key === 'theme' && !['dark', 'light'].includes(value)) throw new Error('Ungültiges Theme.');
     if (key === 'fontScale' && (!Number.isFinite(value) || value < 0.85 || value > 1.3)) throw new Error('Ungültige Schriftgröße.');
     if (key === 'locale' && value !== 'de') throw new Error('Momentan ist nur Deutsch verfügbar.');
-    if (!['theme', 'fontScale', 'locale'].includes(key)) throw new Error('Unbekannte Einstellung.');
+    if (key === 'roadmapReducedMotion' && typeof value !== 'boolean') throw new Error('Ungültige Animationseinstellung.');
+    if (!['theme', 'fontScale', 'locale', 'roadmapReducedMotion'].includes(key)) throw new Error('Unbekannte Einstellung.');
     this.data.settings[key] = value;
     this.schedule();
     return this.settings();

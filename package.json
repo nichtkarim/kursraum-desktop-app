@@ -1,6 +1,6 @@
 {
   "name": "kursraum-local",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Lokale, dateibasierte Kursplattform für Desktop",
   "type": "module",
@@ -11,21 +11,25 @@
     "build": "vite build",
     "preview:desktop": "npm run build && electron .",
     "dist": "npm run build && electron-builder",
-    "test": "node --test tests/*.test.cjs"
+    "test": "node --test tests/*.test.cjs",
+    "dist:deb": "npm run build && electron-builder --linux deb --x64 --publish never",
+    "test:roadmap:ui": "npm run build && node tests/ui/roadmap.cjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@xmldom/xmldom": "^0.8.15",
+    "@xyflow/react": "^12.12.0",
     "chokidar": "^4.0.3",
     "dompurify": "^3.2.3",
+    "electron-store": "^10.1.0",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.8.0",
     "marked": "^15.0.12",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@xmldom/xmldom": "^0.8.15"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
@@ -33,6 +37,7 @@
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "playwright-core": "^1.58.2",
     "vite": "^5.4.11",
     "wait-on": "^8.0.1"
   },
@@ -65,10 +70,25 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
       "category": "Education",
       "icon": "build/icons"
+    },
+    "deb": {
+      "packageCategory": "education",
+      "synopsis": "Kursbibliothek mit Videoplayer und Nextcloud-Synchronisierung"
     }
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/nichtkarim/kursraum-desktop-app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nichtkarim/kursraum-desktop-app.git"
+  },
+  "author": {
+    "name": "karim",
+    "email": "karim.abdulhadi@mail.de"
   }
 }

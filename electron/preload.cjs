@@ -1,6 +1,16 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const api = Object.freeze({
+  roadmaps: Object.freeze({
+    list: () => ipcRenderer.invoke('roadmap:list'),
+    get: id => ipcRenderer.invoke('roadmap:get', id),
+    create: options => ipcRenderer.invoke('roadmap:create', options),
+    save: value => ipcRenderer.invoke('roadmap:save', value),
+    delete: id => ipcRenderer.invoke('roadmap:delete', id),
+    resolve: (id, nodeId) => ipcRenderer.invoke('roadmap:resolve', id, nodeId),
+    export: id => ipcRenderer.invoke('roadmap:export', id),
+    import: () => ipcRenderer.invoke('roadmap:import')
+  }),
   nextcloudStatus: () => ipcRenderer.invoke('nextcloud:status'),
   nextcloudLogin: credentials => ipcRenderer.invoke('nextcloud:login', credentials),
   nextcloudBrowse: remotePath => ipcRenderer.invoke('nextcloud:browse', remotePath),
@@ -24,6 +34,7 @@ const api = Object.freeze({
   download: id => ipcRenderer.invoke('library:download', id),
   open: id => ipcRenderer.invoke('library:open', id),
   reveal: id => ipcRenderer.invoke('library:reveal', id),
+  thumbnailUrl: id => `course-file://resource/${encodeURIComponent(id)}?thumbnail=1`,
   mediaUrl: id => `course-file://resource/${encodeURIComponent(id)}`,
   onEvent: callback => {
     const listener = (_event, message) => callback(message);

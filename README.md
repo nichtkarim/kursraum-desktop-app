@@ -25,7 +25,20 @@ npm run preview:desktop
 npm run dist
 ```
 
-`preview:desktop` öffnet den gebauten Stand in Electron. `dist` erzeugt unter `release/` ein Paket für das aktuelle System: NSIS/Windows, DMG/macOS oder AppImage/Linux. Für andere Betriebssysteme empfiehlt sich jeweils eine passende Build-Umgebung. macOS kann für unsignierte Apps eine Sicherheitsfreigabe verlangen; bei öffentlicher Verteilung ist Signierung/Notarisierung erforderlich. `npm run build` allein erstellt lediglich das Frontend; im gewöhnlichen Browser funktioniert die App ohne Electron-Preload-API nicht.
+`preview:desktop` öffnet den gebauten Stand in Electron. `dist` erzeugt unter `release/` ein Paket für das aktuelle System: NSIS/Windows, DMG/macOS oder AppImage und DEB/Linux. Für andere Betriebssysteme empfiehlt sich jeweils eine passende Build-Umgebung. macOS kann für unsignierte Apps eine Sicherheitsfreigabe verlangen; bei öffentlicher Verteilung ist Signierung/Notarisierung erforderlich. `npm run build` allein erstellt lediglich das Frontend; im gewöhnlichen Browser funktioniert die App ohne Electron-Preload-API nicht.
+
+### Debian-/Ubuntu-Paket
+
+Mit `npm run dist:deb` wird ein installierbares Paket für **amd64 (Intel/AMD, 64 Bit)** erzeugt:
+
+```bash
+npm run dist:deb
+sudo apt install ./release/kursraum-local_1.2.0_amd64.deb
+```
+
+Danach erscheint **Kursraum** mit eigenem Icon im Anwendungsmenü. Electron und die App-Dateien sind im Paket enthalten; Node.js und npm werden nur zum Bauen benötigt. Die Paketverwaltung installiert die notwendigen Systembibliotheken. Benutzerdaten und Kurse bleiben bei einem Paket-Update erhalten.
+
+Videos lassen sich über **Vollbild**, das Symbol in der Videosteuerung oder per Doppelklick maximieren. **Esc** beendet den Vollbildmodus.
 
 ## Nextcloud direkt verbinden
 
@@ -109,3 +122,43 @@ tests/                 Node.js-Tests
 - Root-Pfad, Favoriten, Lesestatus, Notizen und Einstellungen werden unter `kursraum-settings.json` im persönlichen Electron-App-Daten-Ordner gespeichert. Ohne aktivierte Nextcloud-Verbindung werden keine Kursinhalte in eine Cloud übertragen. Bei mehreren Kursroots sind Status/Notizen pro Root getrennt.
 
 Ein initiales lokales Git-Repository mit Commit liegt bei. Nach dem Entpacken sind `git status` und eigene Commits möglich.
+
+### Automatisches DEB-Build-Skript
+
+Unter Linux genügt `./scripts/build-deb.sh` (auch aus einem anderen Arbeitsordner mit vollständigem Pfad aufrufbar). Das Skript installiert die Abhängigkeiten aus der Lockdatei, führt die Tests aus und baut bei jedem Aufruf den aktuellen Stand als `release/kursraum-local_<Version>_amd64.deb`. Voraussetzung: Node.js ab Version 20, npm und Internetzugriff für noch nicht zwischengespeicherte Build-Abhängigkeiten. Bei Fehlern bricht das Skript ab; eine ältere DEB-Datei ist dann kein neuer erfolgreicher Build. Es installiert oder veröffentlicht das Paket nicht.
+
+### Begleitdokumente zum Video
+
+Im Videoplayer öffnet **Begleitmaterial öffnen** eine zusätzliche Dokumentansicht. Wähle ein Kapitel und eine PDF-, DOCX-, TXT-, Markdown- oder Bilddatei. Das Video läuft beim Öffnen, Wechseln und Schließen der Dokumentansicht weiter. Der Lernmodus nutzt die gesamte Fensterfläche. Video und Dokument bleiben nebeneinander; die Trennlinie oder der Regler „Aufteilung“ verändert ihre Breite. Metadaten und Dateiaktionen sind über den Info-Knopf erreichbar. PDFs passen sich an die Bereichsbreite an; der PDF-Zoom vergrößert kleine Schrift. Beim automatischen Wechsel zum nächsten Video bleibt das geöffnete Dokument erhalten; **Zum Kapitel des Videos** führt zu dessen Materialien.
+
+
+## Roadmaps: mehrere Kurse als Lernpfad
+
+**Roadmaps** ist ein zusätzlicher Eintrag in der Seitenleiste. Die Bibliothek und die Einzelkursansicht bleiben der normale Einstieg. Roadmaps sind optional; deine Kursdateien werden dabei nicht verändert.
+
+1. **Neue Roadmap** wählen, einen Namen eingeben und mehrere vorhandene Kurse auswählen.
+2. Kurse über die gepunktete Griffleiste verschieben. Den rechten Verbindungspunkt eines Kurses zum linken Punkt des Folgekurses ziehen. Doppelte Verbindungen und Kreise werden verhindert. Mit **Anordnen** wird der Graph automatisch aufgeräumt.
+3. Ein Klick auf Cover/Titel oder Enter auf einem fokussierten Knoten öffnet den bestehenden Kurs. **Kapitel** klappt die Kapitel auf; ein Kapitel lässt sich direkt öffnen. Über **Roadmaps** kehrst du zum zuletzt geöffneten Graphen zurück.
+4. Rechtsklick oder der Eigenschaftenknopf öffnet Lernziel, Dauer in Minuten, Notizen, Startdatum, Pflicht/optional, Meilenstein und Checkpoint. Dort lassen sich Kurse auch per Auswahlfeld verbinden. Verbindungslinie anklicken, um ihren Hinweis zu bearbeiten oder sie zu entfernen.
+5. **Pfad markieren** aktivieren und einen Startkurs sowie direkt verbundene Folgekurse anklicken. **Pfad starten** öffnet die Sequenz; in der Kursansicht navigieren **Zurück / Nächster Kurs** zwischen den Stationen. Ohne markierten Pfad startet **Reihenfolge starten** die topologisch sortierte Gesamtfolge. Der Wechsel zwischen Kursen erfolgt bewusst per Knopf, nicht über einen zusätzlichen Wiedergabetimer.
+
+**Fortschritt und Empfehlungen:** Gelesene Materialien aktualisieren die Prozentanzeigen live. Ein Kurs mit vollständig gelesenen Materialien oder manuell erreichtem Checkpoint gilt in der Roadmap als abgeschlossen. Der Checkpoint verändert keine Dateilesestatus. Jede Verbindung ist eine Voraussetzung: Erst nach Abschluss aller direkten Vorgänger und Erreichen eines optionalen Startdatums wird eine Station empfohlen. Pflichtstationen werden bevorzugt. Hinweise an Verbindungen sind Beschreibungen, keine ausführbaren Regeln. Du kannst Kurse jederzeit trotzdem öffnen.
+
+**Speichern und Zuordnung:** Änderungen werden lokal in `kursraum-roadmaps.json` im Electron-Benutzerverzeichnis gespeichert, getrennt von Kursordnern und Nextcloud. Ein Speicherindikator zeigt Fehler an. Der Name oben ist editierbar. Löschen entfernt nur die Roadmap. Weil Kurs-IDs vom Ordner abhängen, erscheinen umbenannte/verschobene Kurse zunächst als fehlend. Über **Eigenschaften → Kurs zuordnen** wird die Referenz repariert; Position, Verbindungen und eigene Notizen bleiben erhalten.
+
+**JSON-Import/-Export:** Export speichert Titel, Kursnamen, Knotenpositionen, Metadaten, Verbindungen und markierte Pfade. Kursdateien, Coverdateien, absolute Ordnerpfade und interne Kurs-IDs werden nicht automatisch exportiert. Vor dem Export erinnert ein Dialog daran, eigene Texte auf private Angaben zu prüfen. Import erstellt immer eine neue Roadmap und ordnet eindeutig passende Kursnamen zu. Fehlende Kurse können anschließend manuell zugeordnet werden. Importierte Daten werden geprüft (Version, Größe, IDs, Verbindungen, Kreise); es wird kein Code daraus ausgeführt. Roadmap-Daten werden nicht hochgeladen.
+
+**Beispiel:** `example/Kurse` als Bibliotheksordner auswählen und [example/roadmap-server.json](example/roadmap-server.json) importieren. Das Beispiel enthält vier Kurse, eine dreistufige Hauptfolge und einen optionalen Seitenpfad.
+
+**Darstellung und Performance:** Mausrad zoomt, Ziehen auf freier Fläche verschiebt die Ansicht. Die Knöpfe links unten zoomen und passen alles ein; die Minimap ist ebenfalls bedienbar. Mit **Kompakt** werden Cover und Ziele ausgeblendet. Für mehr als 80 Knoten ist das zunächst aktiviert. Nur sichtbare Knoten werden gerendert; Cover werden als lokal erzeugte Miniaturen mit begrenztem Cache geladen. Maximal 500 Knoten, 2000 Verbindungen und 2 MB pro Roadmap; maximal 200 gespeicherte Roadmaps. **Weniger Effekte** wird dauerhaft gespeichert; die systemweite Einstellung für reduzierte Bewegung wird zusätzlich respektiert. Dark/Light folgt der App-Einstellung. Tab/Enter, Pfeiltasten und die Auswahlfelder ermöglichen Grundinteraktionen ohne Maus.
+
+### Entwicklung und Tests
+
+- `npm test`: Kernlogik einschließlich Roadmap-Persistenz, Validierung, Empfehlungen, Kursauflösung und großer Graphen.
+- `npm run test:roadmap:ui`: echter Electron-Test in isoliertem temporärem Profil; benötigt einen grafischen Linux-Desktop (oder Xvfb). Testet Erstellen, Ziehen, Verbindungen, Eigenschaften, Kapitel, Tastatur, Kursnavigation, Fortschritt, Pfadfolge, Import/Export, Themes und 60 Knoten. Der Test ersetzt native Dateidialoge durch temporäre Testpfade; er verändert keine vorhandenen Benutzerdaten. Screenshots werden in `docs/roadmap` aktualisiert.
+- Backend: `electron/roadmap-manager.cjs` (validiertes Modell und lokale Speicherung), `electron/roadmap-api.cjs` (IPC und native Dateidialoge).
+- Frontend: `src/roadmap/RoadmapAPI.js`, `RoadmapView.jsx`, `CourseNode.jsx`. React Flow wird erst beim Öffnen der Roadmaps geladen.
+
+### Demo in Bildern
+
+[Roadmap erstellen](docs/roadmap/01-erstellen.png) · [Knoten und Verbindungen](docs/roadmap/02-graph.png) · [Kurs öffnen](docs/roadmap/03-kurs-oeffnen.png) · [Helles Theme](docs/roadmap/04-hell.png) · [Kleines Fenster](docs/roadmap/05-kleines-fenster.png) · [60 Knoten](docs/roadmap/06-sechzig-knoten.png)

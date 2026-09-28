@@ -1,10 +1,12 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, shell, session, safeStorage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, shell, session, safeStorage, nativeImage } = require('electron');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { Readable } = require('node:stream');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const { Store } = require('./store.cjs');
+const { RoadmapManager } = require('./roadmap-manager.cjs');
+const { registerRoadmapAPI } = require('./roadmap-api.cjs');
 const { Nextcloud } = require('./nextcloud.cjs');
 const { CourseLibrary } = require('./library.cjs');
 const { parseRange } = require('./range.cjs');
@@ -28,6 +30,7 @@ const mime = {
 };
 
 
+const thumbnails = new Map();
 function registerMediaProtocol() {
   protocol.handle('course-file', async request => {
     try {
@@ -36,6 +39,17 @@ function registerMediaProtocol() {
         return new Response('Not found', { status: 404 });
       const id = url.pathname.slice(1);
       const { absolute, file, stat } = await library.resolveFile(id);
+      if (url.searchParams.get('thumbnail') === '1') {
+        if (!['.png', '.jpg', '.jpeg', '.webp'].includes(path.extname(file.name).toLowerCase()) || stat.size > 16 * 1024 * 1024) return new Response('Not found', { status: 404 });
+        const key = `${id}:${stat.mtimeMs}:${stat.size}`;
+        if (!thumbnails.has(key)) {
+          const source = nativeImage.createFromPath(absolute);
+          if (source.isEmpty()) return new Response('Not found', { status: 404 });
+          thumbnails.set(key, source.resize({ width: 480 }).toPNG());
+          if (thumbnails.size > 64) thumbnails.delete(thumbnails.keys().next().value);
+        }
+        return new Response(thumbnails.get(key), { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' } });
+      }
       const headers = new Headers({
         'Content-Type': mime[path.extname(file.name).toLowerCase()] || 'application/octet-stream',
         'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes',
@@ -124,7 +138,9 @@ function createWindow() {
   window.webContents.on('will-navigate', event => event.preventDefault());
   const allowedDev = devUrl ? new URL(devUrl).origin : null;
   const appAssets = path.resolve(__dirname, '..', 'dist');
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback(permission === 'fullscreen' && contents === window?.webContents && details.isMainFrame === true);
+  });
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     const url = details.url;
     let localAsset = false;
@@ -150,6 +166,10 @@ app.whenReady().then(async () => {
     if (window && !window.isDestroyed()) window.webContents.send('library:event', message);
   } });
   nextcloud.initialize();
+  const { default: ElectronStore } = await import('electron-store');
+  const roadmaps = new RoadmapManager(new ElectronStore({ name: 'kursraum-roadmaps', defaults: { roadmaps: {} } }), library,
+    message => { if (window && !window.isDestroyed()) window.webContents.send('library:event', message); });
+  registerRoadmapAPI({ ipcMain, dialog, getWindow: () => window, manager: roadmaps });
   registerMediaProtocol();
   registerIpc();
   createWindow();

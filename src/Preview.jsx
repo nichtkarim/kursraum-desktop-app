@@ -52,6 +52,13 @@ function PdfPreview({ file }) {
   const host = useRef(null);
   const pdfRef = useRef(null);
   const [page, setPage] = useState(1);
+  const [zoom, setZoom] = useState(1);
+  const [width, setWidth] = useState(640);
+  useEffect(() => {
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)));
+    observer.observe(host.current);
+    return () => observer.disconnect();
+  }, []);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -76,8 +83,8 @@ function PdfPreview({ file }) {
       const pdfPage = await pdfRef.current.getPage(page);
       if (!alive || !canvas.current) return;
       const natural = pdfPage.getViewport({ scale: 1 });
-      const available = Math.max(280, (host.current?.clientWidth || 640) - 28);
-      const scale = Math.min(2, available / natural.width);
+      const available = Math.max(160, width - 28);
+      const scale = (available / natural.width) * zoom;
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       const view = pdfPage.getViewport({ scale: scale * ratio });
       const element = canvas.current;
@@ -92,13 +99,16 @@ function PdfPreview({ file }) {
       if (alive && err.name !== 'RenderingCancelledException') { setError(err.message || 'PDF konnte nicht angezeigt werden.'); setLoading(false); }
     });
     return () => { alive = false; if (renderTask) renderTask.cancel(); };
-  }, [file.id, page, total]);
+  }, [file.id, page, total, width, zoom]);
 
   return <div className="pdf-preview" ref={host}>
     <div className="pdf-controls">
       <button type="button" aria-label="Vorherige Seite" disabled={page <= 1} onClick={() => setPage(n => n - 1)}><ChevronLeft size={18} /></button>
       <span>Seite {page} {total ? `von ${total}` : ''}</span>
       <button type="button" aria-label="Nächste Seite" disabled={!total || page >= total} onClick={() => setPage(n => n + 1)}><ChevronRight size={18} /></button>
+      <select aria-label="PDF-Zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}>
+        <option value={1}>Seitenbreite</option><option value={1.25}>125 %</option><option value={1.5}>150 %</option><option value={2}>200 %</option>
+      </select>
     </div>
     {error ? <PreviewError message={error} /> : <div className="pdf-canvas-wrap">{loading && <div className="preview-placeholder">PDF-Seite wird geladen …</div>}<canvas ref={canvas} /></div>}
   </div>;
