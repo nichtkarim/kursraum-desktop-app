@@ -1,12 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ReactFlow, Background, Controls, MiniMap, applyNodeChanges, applyEdgeChanges, MarkerType } from '@xyflow/react';
+import { ReactFlow, Background, Controls, MiniMap, applyNodeChanges, MarkerType } from '@xyflow/react';
 import { Plus, Upload, Download, Route, Trash2, X, Play, Flag, CheckCircle2, LayoutGrid, ArrowRight, Save, Settings2 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import './roadmap.css';
 import CourseNode from './CourseNode.jsx';
+import RoadmapEdge from './RoadmapEdge.jsx';
+import RestoreViewport from './RestoreViewport.jsx';
+import { arrangeNodes, connectionPorts, reconcileNodes } from './graph.js';
 import { RoadmapAPI as api, newId, allowsConnection, cleanRoute } from './RoadmapAPI.js';
 
 const nodeTypes = { course: CourseNode };
+const edgeTypes = { roadmap: RoadmapEdge };
+const edgeColors = ['#8c86dc', '#409b92', '#bf8542', '#b77197', '#598fcc', '#8a9958'];
+const modeLabels = { and: 'UND', or: 'ODER', xor: 'ENTWEDER ODER' };
+const incomingFor = (draft, id) => draft.edges.filter(edge => edge.target === id);
 function RoadmapDialog({ onClose, children, label }) {
   const ref = useRef(null);
   useEffect(() => { const element = ref.current; element.showModal(); return () => element.close(); }, []);
@@ -38,7 +45,7 @@ export default function RoadmapView({ courses, revision, settings, onSetting, ac
   const [removing, setRemoving] = useState(null);
   const [chapterData, setChapterData] = useState({});
   const [flowNodes, setFlowNodes] = useState([]);
-  const [flowEdges, setFlowEdges] = useState([]);
+  const [hoveredEdge, setHoveredEdge] = useState(null);
   const flow = useRef(null);
   const [systemReduced, setSystemReduced] = useState(window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const reduced = settings.roadmapReducedMotion || systemReduced;
@@ -113,24 +120,45 @@ export default function RoadmapView({ courses, revision, settings, onSetting, ac
   }, [draft, chapterData]);
   const coursesById = useMemo(() => new Map(courses.map(c => [c.id, c])), [courses]);
   const statuses = useMemo(() => new Map((draft?.statuses || []).map(s => [s.id, s])), [draft?.statuses]);
+  const ports = useMemo(() => connectionPorts(draft?.nodes || [], draft?.edges || []), [draft?.nodes, draft?.edges]);
   useEffect(() => {
-    if (!draft) { setFlowNodes([]); setFlowEdges([]); return; }
-    setFlowNodes(draft.nodes.map(node => ({ id: node.id, type: 'course', position: node.position, selected: inspected === node.id, dragHandle: '.roadmap-node-grip',
+    if (!draft) { setFlowNodes([]); return; }
+    setFlowNodes(previous => reconcileNodes(previous, draft.nodes.map((node, index) => ({ id: node.id, type: 'course', position: node.position, selected: inspected === node.id, dragHandle: '.roadmap-node-grip',
       ariaLabel: `${coursesById.get(node.courseId)?.name || node.courseName}, Kurs`,
       data: { node, course: coursesById.get(node.courseId), progress: statuses.get(node.id)?.progress || 0, complete: statuses.get(node.id)?.complete,
-        recommended: draft.recommended === node.id, inRoute: draft.route.includes(node.id), removing: removing === node.id, compact, chapters: chapterData[node.courseId], open, inspect, expand } })));
-    setFlowEdges(draft.edges.map(e => ({ ...e, selected: selectedEdge === e.id, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed },
-      animated: !reduced && draft.route.some((id, i) => id === e.source && draft.route[i + 1] === e.target),
-      style: { stroke: draft.route.some((id, i) => id === e.source && draft.route[i + 1] === e.target) ? '#a7a0ff' : undefined, strokeWidth: 2 } })));
-  }, [draft, coursesById, statuses, inspected, selectedEdge, compact, chapterData, open, inspect, expand, reduced, removing]);
+        ports: ports.get(node.id), connectionColor: edgeColors[index % edgeColors.length],
+        recommended: draft.recommended === node.id, inRoute: draft.route.includes(node.id), removing: removing === node.id, compact, chapters: chapterData[node.courseId], open, inspect, expand } }))));
+  }, [draft, coursesById, statuses, inspected, compact, chapterData, open, inspect, expand, removing, ports]);
+  const rectangles = useMemo(() => flowNodes.map(node => ({ id: node.id, ...node.position, width: node.measured?.width || 280, height: node.measured?.height || 280 })), [flowNodes]);
+  const flowEdges = useMemo(() => {
+    if (!draft) return [];
+    const nodesById = new Map(draft.nodes.map(node => [node.id, node]));
+    const colors = new Map(draft.nodes.map((node, index) => [node.id, edgeColors[index % edgeColors.length]]));
+    const focusEdge = hoveredEdge || selectedEdge;
+    return draft.edges.map(e => {
+      const target = nodesById.get(e.target);
+      const mode = target?.prerequisiteMode || 'and';
+      const multiple = ports.get(e.target)?.incoming.length > 1;
+      const unchosen = multiple && mode === 'xor' && target.prerequisiteChoice && target.prerequisiteChoice !== e.source;
+      const inRoute = draft.route.some((id, i) => id === e.source && draft.route[i + 1] === e.target);
+      const highlighted = focusEdge ? e.id === focusEdge : inspected ? e.source === inspected || e.target === inspected : inRoute;
+      const dimmed = Boolean(focusEdge || inspected) && !highlighted;
+      const color = colors.get(e.target);
+      const description = `${nodesById.get(e.source)?.courseName} → ${target?.courseName}${multiple ? ` · ${modeLabels[mode]}` : ''}${e.label ? ` · ${e.label}` : ''}`;
+      return { ...e, label: undefined, ariaLabel: description, sourceHandle: `out-${e.id}`, targetHandle: `in-${e.id}`,
+        selected: selectedEdge === e.id, type: 'roadmap', markerEnd: { type: MarkerType.ArrowClosed, color }, zIndex: highlighted ? 2 : 0,
+        data: { description, rectangles, sourceLane: ports.get(e.source).outgoing.findIndex(link => link.id === e.id), targetLane: ports.get(e.target).incoming.findIndex(link => link.id === e.id) },
+        style: { stroke: color, opacity: dimmed ? .15 : unchosen ? .45 : 1, strokeWidth: highlighted ? 3 : 1.8, strokeDasharray: unchosen ? '5 5' : undefined } };
+    });
+  }, [draft, ports, rectangles, inspected, selectedEdge, hoveredEdge]);
 
   const connect = useCallback(connection => {
     const d = draftRef.current;
     if (!allowsConnection(d.nodes, d.edges, connection.source, connection.target)) { setError('Diese Verbindung ist doppelt oder würde einen Kreis erzeugen.'); return; }
     change(value => ({ ...value, edges: [...value.edges, { id: newId(), source: connection.source, target: connection.target, label: '' }] }));
   }, [change]);
-  const removeEdge = id => { change(d => { const edges = d.edges.filter(e => e.id !== id); return { ...d, edges, route: cleanRoute(d.route, edges) }; }); setSelectedEdge(null); };
-  const removeNode = id => { const mapId = current.current.id; setRemoving(id); setTimeout(() => { if (current.current?.id !== mapId) return; change(d => { const nodes = d.nodes.filter(n => n.id !== id); const edges = d.edges.filter(e => e.source !== id && e.target !== id); return { ...d, nodes, edges, route: cleanRoute(d.route.filter(n => n !== id), edges) }; }); setInspected(null); setRemoving(null); }, reduced ? 0 : 160); };
+  const removeEdge = id => { change(d => { const removed = d.edges.find(e => e.id === id); const edges = d.edges.filter(e => e.id !== id); const nodes = d.nodes.map(n => n.id === removed.target && n.prerequisiteChoice === removed.source ? { ...n, prerequisiteChoice: '' } : n); return { ...d, nodes, edges, route: cleanRoute(d.route, edges) }; }); setSelectedEdge(null); };
+  const removeNode = id => { const mapId = current.current.id; setRemoving(id); setTimeout(() => { if (current.current?.id !== mapId) return; change(d => { const nodes = d.nodes.filter(n => n.id !== id); const edges = d.edges.filter(e => e.source !== id && e.target !== id); return { ...d, nodes: nodes.map(n => n.prerequisiteChoice === id ? { ...n, prerequisiteChoice: '' } : n), edges, route: cleanRoute(d.route.filter(n => n !== id), edges) }; }); setInspected(null); setRemoving(null); }, reduced ? 0 : 160); };
   const patchNode = (id, patch, save = true) => change(d => ({ ...d, nodes: d.nodes.map(n => n.id === id ? { ...n, ...patch } : n) }), save);
   const addCourses = async event => {
     event.preventDefault(); setError('');
@@ -140,13 +168,10 @@ export default function RoadmapView({ courses, revision, settings, onSetting, ac
       setPicker(null); setPicked([]);
     } catch (e) { setError(e.message); }
   };
-  const autoLayout = () => {
+  const autoLayout = async () => {
     const d = draftRef.current;
-    if (!d.edges.length) { const columns = Math.max(1, Math.ceil(Math.sqrt(d.nodes.length))); change(value => ({ ...value, nodes: value.nodes.map((n, i) => ({ ...n, position: { x: (i % columns) * 340, y: Math.floor(i / columns) * 340 } })) })); setTimeout(() => flow.current?.fitView({ padding: .15, duration: reduced ? 0 : 350 }), 60); return; }
-    const levels = new Map(d.nodes.map(n => [n.id, 0]));
-    for (let i = 0; i < d.nodes.length; i++) for (const e of d.edges) levels.set(e.target, Math.max(levels.get(e.target), levels.get(e.source) + 1));
-    const rows = new Map(); change(value => ({ ...value, nodes: value.nodes.map(n => { const level = levels.get(n.id); const row = rows.get(level) || 0; rows.set(level, row + 1); return { ...n, position: { x: level * 360, y: row * 360 } }; }) }));
-    setTimeout(() => flow.current?.fitView({ padding: .15, duration: reduced ? 0 : 350 }), 60);
+    await change(value => ({ ...value, nodes: arrangeNodes(value.nodes, value.edges, flow.current?.getNodes() || []) }));
+    requestAnimationFrame(() => { if (current.current?.id === d.id) void flow.current?.fitView({ padding: .18, duration: 0 }); });
   };
   const startPath = async () => {
     if (!await flush()) return;
@@ -158,6 +183,8 @@ export default function RoadmapView({ courses, revision, settings, onSetting, ac
   };
   const selected = draft?.nodes.find(n => n.id === inspected);
   const edge = draft?.edges.find(e => e.id === selectedEdge);
+  const target = edge && draft.nodes.find(n => n.id === edge.target);
+  const incoming = selected ? incomingFor(draft, selected.id) : target ? incomingFor(draft, target.id) : [];
   const totalDone = (draft?.statuses || []).filter(s => s.complete).length;
 
   return <section className={`roadmap-page ${reduced ? 'reduced-effects' : ''}`} aria-label="Roadmaps">
@@ -168,7 +195,7 @@ export default function RoadmapView({ courses, revision, settings, onSetting, ac
       {draft && <><input aria-label="Roadmap umbenennen" value={draft.title} maxLength={120} onChange={e => change(d => ({ ...d, title: e.target.value }), false)} onBlur={() => persist(current.current)} /><span className="roadmap-save" role="status">{status}</span><button title="Jetzt speichern" aria-label="Roadmap speichern" onClick={() => persist(current.current)}><Save size={16} /></button><button aria-label="Roadmap exportieren" title="Als JSON exportieren" onClick={async () => { if (await flush()) api.export(activeId).catch(e => setError(e.message)); }}><Download size={17} /></button><button aria-label="Roadmap löschen" onClick={() => setConfirmDelete(true)}><Trash2 size={17} /></button></>}
     </div>
     {!draft ? <div className="roadmap-empty"><div className="roadmap-empty-symbol"><Route size={56} /></div><h2>Aus Kursen wird ein Weg.</h2><p>Verbinde deine Kurse, setze Meilensteine und behalte deinen nächsten Schritt im Blick.</p><button className="roadmap-primary" onClick={() => { setPicker('create'); setPicked([]); }}>Erste Roadmap erstellen</button></div> : <>
-      <div className="roadmap-tools"><button onClick={() => { setPicker('add'); setPicked([]); }}><Plus size={16} /> Kurse hinzufügen</button><button onClick={autoLayout}><LayoutGrid size={16} /> Anordnen</button>
+      <div className="roadmap-tools"><button onClick={() => { setPicker('add'); setPicked([]); }}><Plus size={16} /> Kurse hinzufügen</button><button onClick={autoLayout}><LayoutGrid size={16} /> Anordnen</button><button onClick={() => flow.current?.fitView({ padding: .18, duration: 0 })}>Ansicht zentrieren</button>
         <button className={marking ? 'active' : ''} aria-pressed={marking} onClick={() => setMarking(v => !v)}><Flag size={16} /> Pfad markieren</button>
         {draft.route.length > 0 && <button onClick={() => change(d => ({ ...d, route: [] }))}>Pfad leeren ({draft.route.length})</button>}
         <button onClick={startPath} disabled={!draft.nodes.length}><Play size={16} /> {draft.route.length ? 'Pfad starten' : 'Reihenfolge starten'}</button>
@@ -179,19 +206,19 @@ export default function RoadmapView({ courses, revision, settings, onSetting, ac
       </div>
       {marking && <p className="roadmap-path-hint">Klicke zuerst einen Startkurs, danach direkt verbundene Folgekurse. Die markierte Sequenz wird gespeichert.</p>}
       <div className="roadmap-editor"><div className="roadmap-canvas">
-        <ReactFlow key={activeId} nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} colorMode={settings.theme} ariaLabelConfig={labels}
-          onInit={instance => { flow.current = instance; }} defaultViewport={draft.viewport} minZoom={.15} maxZoom={2} onlyRenderVisibleElements
-          onNodesChange={changes => { setFlowNodes(old => applyNodeChanges(changes, old)); const positions = changes.filter(c => c.type === 'position' && c.position && c.dragging !== true); if (positions.length) change(d => ({ ...d, nodes: d.nodes.map(n => { const move = positions.find(c => c.id === n.id); return move ? { ...n, position: move.position } : n; }) })); }}
-          onNodeDragStop={(_event, node) => change(d => ({ ...d, nodes: d.nodes.map(n => n.id === node.id ? { ...n, position: node.position } : n) }))}
-          onEdgesChange={changes => setFlowEdges(old => applyEdgeChanges(changes, old))}
+        <ReactFlow key={activeId} nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} colorMode={settings.theme} ariaLabelConfig={labels}
+          onInit={instance => { flow.current = instance; }} defaultViewport={draft.viewport} minZoom={.15} maxZoom={2}
+          onNodesChange={changes => { setFlowNodes(old => applyNodeChanges(changes, old)); const positions = changes.filter(c => { const old = current.current?.nodes.find(n => n.id === c.id)?.position; return c.type === 'position' && c.position && c.dragging !== true && old && (old.x !== c.position.x || old.y !== c.position.y); }); if (positions.length) change(d => ({ ...d, nodes: d.nodes.map(n => { const move = positions.find(c => c.id === n.id); return move ? { ...n, position: move.position } : n; }) })); }}
+          onEdgesChange={changes => { const selected = changes.find(c => c.type === 'select' && c.selected); if (selected) { setSelectedEdge(selected.id); setInspected(null); } }}
           onConnect={connect} isValidConnection={c => allowsConnection(draftRef.current.nodes, draftRef.current.edges, c.source, c.target)}
-          onMoveEnd={(_event, viewport) => { const old = current.current?.viewport; if (old && (old.x !== viewport.x || old.y !== viewport.y || old.zoom !== viewport.zoom)) change(d => ({ ...d, viewport })); }}
+          onMoveEnd={(_event, viewport) => { const old = current.current?.viewport; if (old && Object.values(viewport).every(Number.isFinite) && (Math.abs(old.x - viewport.x) > .5 || Math.abs(old.y - viewport.y) > .5 || Math.abs(old.zoom - viewport.zoom) > .001)) change(d => ({ ...d, viewport })); }}
           onNodeClick={(event, node) => { if (!event.target.closest('button, .react-flow__handle, .roadmap-node-grip')) open(node.id); }}
           onNodeContextMenu={(event, node) => { event.preventDefault(); inspect(node.id); }}
           onNodeDoubleClick={() => {}} onEdgeClick={(_event, e) => { setSelectedEdge(e.id); setInspected(null); }}
+          onEdgeMouseEnter={(_event, e) => setHoveredEdge(e.id)} onEdgeMouseLeave={() => setHoveredEdge(null)}
           onPaneClick={() => { setInspected(null); setSelectedEdge(null); }} deleteKeyCode={null} zoomOnDoubleClick={false}
           onKeyDown={event => { if (event.key === 'Enter' && event.target.classList.contains('react-flow__node')) { const id = event.target.dataset.id; if (id) { event.preventDefault(); open(id); } } }}>
-          <Background color={settings.theme === 'light' ? '#c9cce0' : '#30374c'} gap={24} /><Controls /><MiniMap pannable zoomable nodeColor={n => n.data?.complete ? '#64c2a0' : n.data?.recommended ? '#9288ff' : '#545e7a'} />
+          <RestoreViewport /><Background color={settings.theme === 'light' ? '#c9cce0' : '#30374c'} gap={24} /><Controls /><MiniMap pannable zoomable nodeColor={n => n.data?.complete ? '#64c2a0' : n.data?.recommended ? '#9288ff' : '#545e7a'} />
         </ReactFlow>
         {!draft.nodes.length && <div className="roadmap-canvas-empty">Füge Kurse hinzu, um deinen Lernpfad zu beginnen.</div>}
       </div>
@@ -205,10 +232,11 @@ export default function RoadmapView({ courses, revision, settings, onSetting, ac
           <label className="roadmap-check"><input type="checkbox" checked={selected.milestone || false} onChange={e => patchNode(selected.id, { milestone: e.target.checked })} /> Meilenstein</label>
           <label className="roadmap-check"><input type="checkbox" checked={selected.checkpoint || false} onChange={e => patchNode(selected.id, { checkpoint: e.target.checked })} /> Checkpoint erreicht</label>
           <label>Notizen<textarea aria-label="Roadmap-Notizen" value={selected.notes || ''} maxLength={8000} onChange={e => patchNode(selected.id, { notes: e.target.value }, false)} onBlur={() => persist(current.current)} /></label>
+          {incoming.length > 1 && <div className="roadmap-condition"><strong>Voraussetzungen für diesen Kurs</strong><label>Verknüpfung<select aria-label="Verknüpfung der Voraussetzungen" value={selected.prerequisiteMode || 'and'} onChange={e => patchNode(selected.id, { prerequisiteMode: e.target.value, prerequisiteChoice: e.target.value === 'xor' ? selected.prerequisiteChoice || '' : '' })}><option value="and">Und – alle Vorgänger</option><option value="or">Oder – mindestens einer</option><option value="xor">Entweder oder – eine gewählte Variante</option></select></label>{selected.prerequisiteMode === 'xor' && <label>Gewählte Variante<select aria-label="Gewählte Voraussetzung" value={selected.prerequisiteChoice || ''} onChange={e => patchNode(selected.id, { prerequisiteChoice: e.target.value })}><option value="">Variante wählen …</option>{incoming.map(link => <option key={link.id} value={link.source}>{draft.nodes.find(n => n.id === link.source)?.courseName}</option>)}</select></label>}<small>{selected.prerequisiteMode === 'xor' ? 'Der Zielkurs wird nach Abschluss der gewählten Variante empfohlen.' : selected.prerequisiteMode === 'or' ? 'Ein abgeschlossener Vorgänger genügt.' : 'Alle Vorgänger müssen abgeschlossen sein.'}</small></div>}
           <label>Verbinden mit<select aria-label="Folgekurs auswählen" defaultValue="" onChange={e => { if (e.target.value) connect({ source: selected.id, target: e.target.value }); e.target.value = ''; }}><option value="">Folgekurs auswählen …</option>{draft.nodes.filter(n => allowsConnection(draft.nodes, draft.edges, selected.id, n.id)).map(n => <option key={n.id} value={n.id}>{n.courseName}</option>)}</select></label>
           <button className="roadmap-danger" onClick={() => removeNode(selected.id)}><Trash2 size={16} /> Aus Roadmap entfernen</button><small>Die Kursdateien bleiben erhalten.</small>
         </>}
-        {edge && <><p>Die Ausgangsstation ist eine Voraussetzung für die Zielstation.</p><label>Bedingung / Hinweis<input value={edge.label || ''} maxLength={150} onChange={e => change(d => ({ ...d, edges: d.edges.map(item => item.id === edge.id ? { ...item, label: e.target.value } : item) }), false)} onBlur={() => persist(current.current)} /></label><button className="roadmap-danger" onClick={() => removeEdge(edge.id)}><Trash2 size={16} /> Verbindung entfernen</button></>}
+        {edge && <><div className="roadmap-connection-summary"><strong>{draft.nodes.find(n => n.id === edge.source)?.courseName}</strong><ArrowRight size={16} /><strong>{target?.courseName}</strong></div><p>Die Ausgangsstation ist eine Voraussetzung für die Zielstation. Mehrere Verbindungen werden am Zielkurs verknüpft.</p>{incoming.length > 1 && <div className="roadmap-condition"><label>Verknüpfung am Zielkurs<select aria-label="Verknüpfung der Voraussetzungen" value={target.prerequisiteMode || 'and'} onChange={e => patchNode(target.id, { prerequisiteMode: e.target.value, prerequisiteChoice: e.target.value === 'xor' ? target.prerequisiteChoice || '' : '' })}><option value="and">Und – alle Vorgänger</option><option value="or">Oder – mindestens einer</option><option value="xor">Entweder oder – eine gewählte Variante</option></select></label>{target.prerequisiteMode === 'xor' && <label>Gewählte Variante<select aria-label="Gewählte Voraussetzung" value={target.prerequisiteChoice || ''} onChange={e => patchNode(target.id, { prerequisiteChoice: e.target.value })}><option value="">Variante wählen …</option>{incoming.map(link => <option key={link.id} value={link.source}>{draft.nodes.find(n => n.id === link.source)?.courseName}</option>)}</select></label>}</div>}<label>Bedingung / Hinweis<input value={edge.label || ''} maxLength={150} onChange={e => change(d => ({ ...d, edges: d.edges.map(item => item.id === edge.id ? { ...item, label: e.target.value } : item) }), false)} onBlur={() => persist(current.current)} /></label><button className="roadmap-danger" onClick={() => removeEdge(edge.id)}><Trash2 size={16} /> Verbindung entfernen</button></>}
       </aside>}
       </div>
       <footer className="roadmap-footer">Kurs anklicken: öffnen · Griffleiste: verschieben · Verbindungspunkte: verknüpfen · Rechtsklick: Eigenschaften · Änderungen werden lokal gespeichert</footer>

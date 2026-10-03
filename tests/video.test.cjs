@@ -72,11 +72,49 @@ test('Wiederholtes Abschließen bleibt gelesen und wird mit Favoritenstatus daue
   const courseId = library.overview().courses[0].id;
   const video = library.listFiles({ courseId }).items[0];
   library.setFileState(video.id, { favorite: true });
-  library.setFileState(video.id, { read: true });
+  library.setFileState(video.id, { read: true, learningPoints: ['Erster Lernpunkt', 'Zweiter Lernpunkt'], serviceIdea: 'Eine mögliche Dienstleistung' });
   library.setFileState(video.id, { read: true });
   assert.equal(library.course(courseId).readCount, 1);
   await store.flush();
   const restored = new Store(store.filename);
   await restored.load();
-  assert.deepEqual(restored.file(video.id), { read: true, favorite: true });
+  assert.deepEqual(restored.file(video.id), { read: true, favorite: true, learningPoints: ['Erster Lernpunkt', 'Zweiter Lernpunkt'], serviceIdea: 'Eine mögliche Dienstleistung', serviceAudience: '', serviceNextStep: '' });
+});
+
+test('Videoposition bleibt bei Neustart, Favoriten und Reflexion erhalten, ohne als gelesen zu gelten', async t => {
+  const { library, store } = await fixture(t, ['Kurs/Video.mp4', 'Kurs/Zweites.mp4', 'Kurs/Notizen.txt']);
+  const files = library.listFiles({ courseId: library.overview().courses[0].id }).items;
+  const video = files.find(file => file.name === 'Video.mp4');
+  await library.setVideoProgress(video.id, 123.75);
+  assert.equal(store.file(video.id).read, false);
+  assert.equal(await library.videoProgress(video.id), 123.75);
+  await library.persistState(() => library.setFileState(video.id, { favorite: true }));
+  await library.persistState(() => library.setFileState(video.id, { read: true, learningPoints: ['Eins', 'Zwei'], serviceIdea: 'Ein Workshop' }));
+  assert.equal(await library.videoProgress(video.id), 123.75);
+  const restored = new Store(store.filename); await restored.load();
+  assert.equal(restored.file(video.id).playbackPosition, 123.75);
+  assert.equal(await library.videoProgress(files.find(file => file.name === 'Zweites.mp4').id), 0);
+  await library.setVideoProgress(video.id, 0);
+  assert.equal(store.file(video.id).read, true);
+  assert.equal(store.file(video.id).serviceIdea, 'Ein Workshop');
+  assert.equal(await library.videoProgress(video.id), 0);
+});
+
+test('Videoposition validiert Eingaben, serialisiert Schreibzugriffe und verwendet auch Cloud-IDs', async t => {
+  const { library, store } = await fixture(t, ['Kurs/Video.mp4', 'Kurs/Notizen.txt']);
+  const files = library.listFiles({ courseId: library.overview().courses[0].id }).items;
+  const video = files.find(file => file.kind === 'video');
+  for (const value of [-1, NaN, Infinity, '30', null, {}]) await assert.rejects(library.setVideoProgress(video.id, value), /Ungültige Videoposition/);
+  await assert.rejects(library.setVideoProgress(files.find(file => file.kind === 'text').id, 2), /Video nicht gefunden/);
+  await assert.rejects(library.videoProgress('missing'), /Video nicht gefunden/);
+  await library.setCloudVideos(library.root, [{ relative: 'Kurs/Video.mp4', name: 'Video.mp4', size: 10, modified: Date.now() }]);
+  await Promise.all([library.setVideoProgress(video.id, 17), library.setVideoProgress(video.id, 9)]);
+  assert.equal(await library.videoProgress(video.id), 9);
+  const originalFlush = store.flush;
+  store.flush = async () => { throw new Error('disk full'); };
+  await assert.rejects(library.setVideoProgress(video.id, 50), /disk full/);
+  store.flush = originalFlush;
+  assert.equal(await library.videoProgress(video.id), 9);
+  await library.setVideoProgress(video.id, 12);
+  assert.equal(await library.videoProgress(video.id), 12);
 });

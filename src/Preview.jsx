@@ -53,11 +53,18 @@ function PdfPreview({ file }) {
   const pdfRef = useRef(null);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
-  const [width, setWidth] = useState(640);
+  const [width, setWidth] = useState(0);
+  const [hasRendered, setHasRendered] = useState(false);
   useEffect(() => {
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)));
+    let timer;
+    const observer = new ResizeObserver(([entry]) => {
+      const nextWidth = Math.floor(entry.contentRect.width);
+      clearTimeout(timer);
+      // Keep the current page visible while the divider is moving.
+      timer = setTimeout(() => setWidth(nextWidth), 100);
+    });
     observer.observe(host.current);
-    return () => observer.disconnect();
+    return () => { clearTimeout(timer); observer.disconnect(); };
   }, []);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState('');
@@ -75,7 +82,7 @@ function PdfPreview({ file }) {
   }, [file.id]);
 
   useEffect(() => {
-    if (!total || !pdfRef.current) return;
+    if (!total || !pdfRef.current || !width) return;
     let alive = true;
     let renderTask;
     setLoading(true);
@@ -87,14 +94,22 @@ function PdfPreview({ file }) {
       const scale = (available / natural.width) * zoom;
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       const view = pdfPage.getViewport({ scale: scale * ratio });
+      // PDF.js renders asynchronously. Never clear the visible canvas until
+      // the replacement is complete, including when an in-flight render is cancelled.
+      const buffer = document.createElement('canvas');
+      buffer.width = Math.floor(view.width);
+      buffer.height = Math.floor(view.height);
+      renderTask = pdfPage.render({ canvasContext: buffer.getContext('2d'), viewport: view });
+      await renderTask.promise;
+      if (!alive || !canvas.current) return;
       const element = canvas.current;
-      element.width = Math.floor(view.width);
-      element.height = Math.floor(view.height);
+      element.width = buffer.width;
+      element.height = buffer.height;
       element.style.width = `${Math.floor(view.width / ratio)}px`;
       element.style.height = `${Math.floor(view.height / ratio)}px`;
-      renderTask = pdfPage.render({ canvasContext: element.getContext('2d'), viewport: view });
-      await renderTask.promise;
-      if (alive) setLoading(false);
+      element.getContext('2d').drawImage(buffer, 0, 0);
+      setHasRendered(true);
+      setLoading(false);
     })().catch(err => {
       if (alive && err.name !== 'RenderingCancelledException') { setError(err.message || 'PDF konnte nicht angezeigt werden.'); setLoading(false); }
     });
@@ -110,7 +125,7 @@ function PdfPreview({ file }) {
         <option value={1}>Seitenbreite</option><option value={1.25}>125 %</option><option value={1.5}>150 %</option><option value={2}>200 %</option>
       </select>
     </div>
-    {error ? <PreviewError message={error} /> : <div className="pdf-canvas-wrap">{loading && <div className="preview-placeholder">PDF-Seite wird geladen …</div>}<canvas ref={canvas} /></div>}
+    {error ? <PreviewError message={error} /> : <div className={`pdf-canvas-wrap${hasRendered ? '' : ' is-loading'}`} aria-busy={loading}>{!hasRendered && <div className="preview-placeholder" role="status">PDF-Seite wird geladen …</div>}<canvas ref={canvas} role="img" aria-label={`PDF-Seite ${page}`} /></div>}
   </div>;
 }
 
@@ -118,10 +133,10 @@ function PreviewError({ message }) {
   return <div className="preview-placeholder"><FileWarning size={26} /><span>{message}</span></div>;
 }
 
-export default function Preview({ file, autoPlay, onWatched, onNext }) {
+export default function Preview({ file, autoPlay, onWatched, onNext, reflectionOpen }) {
   if (!file) return null;
   if (file.kind === 'image') return <div className="media-preview"><img src={api.mediaUrl(file.id)} alt={file.name} /></div>;
-  if (file.kind === 'video') return <VideoPlayer key={file.id} file={file} autoPlay={autoPlay} onWatched={onWatched} onNext={onNext} />;
+  if (file.kind === 'video') return <VideoPlayer key={file.id} file={file} autoPlay={autoPlay} onWatched={onWatched} onNext={onNext} reflectionOpen={reflectionOpen} />;
   if (file.kind === 'pdf') return <PdfPreview key={file.id} file={file} />;
   if (['text', 'markdown', 'docx'].includes(file.kind)) return <DocumentPreview key={file.id} file={file} />;
   return <PreviewError message="Für diesen Dateityp gibt es keine integrierte Vorschau. Du kannst die Datei öffnen oder herunterladen." />;

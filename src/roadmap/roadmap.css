@@ -23,7 +23,7 @@
 .roadmap-editor { display: flex; flex: 1; min-height: 240px; overflow: hidden; border-top: 1px solid var(--line); }
 .roadmap-canvas { flex: 1; min-width: 0; position: relative; background: radial-gradient(ellipse at 20% 30%, #6865e013, transparent 65%), var(--bg); }
 .roadmap-canvas .react-flow { --xy-background-color: transparent; --xy-edge-stroke: #7785a1; --xy-controls-button-background-color: var(--panel); --xy-controls-button-color: var(--text); --xy-controls-button-border-color: var(--line); --xy-minimap-background-color: var(--panel); --xy-minimap-mask-background-color: #83839920; }
-.roadmap-node { width: var(--rm-node-width); border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: 0 8px 24px #0002; overflow: visible; animation: roadmap-enter .22s ease-out; transition: box-shadow .2s, border-color .2s; }
+.roadmap-node { width: var(--rm-node-width); border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: 0 8px 24px #0002; overflow: visible; transition: box-shadow .2s, border-color .2s; }
 .roadmap-node.is-next { border-color: #9288ff; box-shadow: 0 0 0 1px #9288ff66, 0 8px 36px #9288ff25; }
 .roadmap-node.is-complete { border-color: var(--success); }
 .roadmap-node.is-missing { border-color: #c49163; }
@@ -55,6 +55,8 @@
 .roadmap-properties label, .roadmap-picker > label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: .74rem; }
 .roadmap-properties textarea { min-height: 65px; resize: vertical; }
 .roadmap-properties .roadmap-check { flex-direction: row; align-items: center; }
+.roadmap-condition { display: flex; flex-direction: column; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.roadmap-condition strong { font-size: .76rem; }
 .roadmap-properties small, .roadmap-properties p { color: var(--muted); font-size: .72rem; line-height: 1.6; }
 .roadmap-page .roadmap-danger { color: #eaa7ae; }
 :root[data-theme=light] .roadmap-page .roadmap-danger { color: #a92d40; }
@@ -75,7 +77,6 @@
 .roadmap-route-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: var(--accent-bg); color: var(--accent); font-size: .8rem; }
 .roadmap-route-bar strong { flex: 1; }
 .roadmap-route-bar button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
-@keyframes roadmap-enter { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
 .reduced-effects *, .reduced-effects *::before, .reduced-effects *::after { animation: none !important; transition: none !important; }
 @media (max-width: 1050px) { .roadmap-header { padding: 14px 14px 10px; }.roadmap-bar, .roadmap-tools, .roadmap-summary { padding-inline: 14px; }.roadmap-save { display: none; }.roadmap-properties { width: 250px; }.roadmap-header h1 { font-size: 1.5rem; } }
 @media (max-width: 800px) { .roadmap-header .eyebrow { display: none; }.roadmap-tools { gap: 4px; }.roadmap-header-actions button { font-size: .7rem; padding: 7px; }.roadmap-summary { align-items: flex-start; }.roadmap-footer { display: none; }.roadmap-bar > select { max-width: 180px; } }
@@ -86,4 +87,11 @@ dialog.roadmap-modal-backdrop { width: 100vw; height: 100dvh; max-width: none; m
 dialog.roadmap-modal-backdrop:not([open]) { display: none; }
 
 .roadmap-node.is-removing { opacity: 0; transform: scale(.92); transition: opacity .16s, transform .16s; pointer-events: none; }
-.roadmap-canvas .react-flow__node:not(.dragging) { transition: transform .2s ease; }
+
+
+.roadmap-node .roadmap-edge-port { width: 8px; height: 8px; border-width: 2px; pointer-events: none; }
+.roadmap-page .roadmap-node-condition { margin: 0 10px 10px; padding: 5px 8px; max-width: calc(100% - 20px); border-radius: 6px; border-left-width: 3px; font-size: 10px; background: var(--bg); }
+.roadmap-node-condition span { color: var(--muted); font-size: 9px; }
+.roadmap-canvas .react-flow__edge:focus-visible .react-flow__edge-path { stroke-width: 4; }
+
+.roadmap-connection-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: .8rem; overflow-wrap: anywhere; }

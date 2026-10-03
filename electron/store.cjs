@@ -1,6 +1,31 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+function learningPoints(current, patch) {
+  const supplied = Object.hasOwn(patch, 'learningPoints');
+  let points = current.learningPoints || [];
+  if (supplied) {
+    if (!Array.isArray(patch.learningPoints) || patch.learningPoints.length > 100 ||
+        patch.learningPoints.some(point => typeof point !== 'string' || point.length > 2000)) {
+      throw new Error('Bitte gültige Lernpunkte eingeben (höchstens 100 Punkte mit je 2000 Zeichen).');
+    }
+    points = patch.learningPoints.map(point => point.trim()).filter(Boolean);
+    if (new Set(points.map(point => point.normalize('NFKC').toLocaleLowerCase('de'))).size !== points.length) {
+      throw new Error('Bitte unterschiedliche Lernpunkte eintragen.');
+    }
+  }
+  if (supplied && points.length < 2) {
+    throw new Error('Trage mindestens zwei Lernpunkte für deine Reflexion ein.');
+  }
+  return points;
+}
+
+function reflectionText(current, patch, key, maximum) {
+  if (!Object.hasOwn(patch, key)) return current[key] || '';
+  if (typeof patch[key] !== 'string' || patch[key].length > maximum) throw new Error('Bitte gültige Angaben zur Dienstleistungsidee eingeben.');
+  return patch[key].trim();
+}
+
 class Store {
   constructor(filename) {
     this.filename = filename;
@@ -17,6 +42,7 @@ class Store {
       const cloud = raw.nextcloud;
       if (cloud && ['serverUrl', 'username', 'remotePath', 'localRoot'].every(key => typeof cloud[key] === 'string')) {
         this.data.nextcloud = { serverUrl: cloud.serverUrl, username: cloud.username, remotePath: cloud.remotePath, localRoot: cloud.localRoot,
+          videoMode: cloud.videoMode === 'stream' ? 'stream' : 'download', videos: Array.isArray(cloud.videos) ? cloud.videos : [],
           autoSync: cloud.autoSync === true, encryptedPassword: typeof cloud.encryptedPassword === 'string' ? cloud.encryptedPassword : '', lastSync: cloud.lastSync || null };
       }
       this.data.settings = { ...this.data.settings, ...(raw.settings || {}) };
@@ -44,8 +70,14 @@ class Store {
 
   setFile(id, patch) {
     const current = this.file(id);
-    const next = { read: Boolean(patch.read ?? current.read), favorite: Boolean(patch.favorite ?? current.favorite) };
-    if (!next.read && !next.favorite) delete this.data.files[id];
+    const points = learningPoints(current, patch);
+    const position = Object.hasOwn(patch, 'playbackPosition') ? patch.playbackPosition : current.playbackPosition;
+    if (position !== undefined && (!Number.isFinite(position) || position < 0)) throw new Error('Ungültige Videoposition.');
+    const next = { ...(position === undefined ? {} : { playbackPosition: position }), read: Boolean(patch.read ?? current.read), favorite: Boolean(patch.favorite ?? current.favorite), learningPoints: points,
+      serviceIdea: reflectionText(current, patch, 'serviceIdea', 4000),
+      serviceAudience: reflectionText(current, patch, 'serviceAudience', 1000),
+      serviceNextStep: reflectionText(current, patch, 'serviceNextStep', 2000) };
+    if (!next.read && !next.favorite && !points.length && !next.serviceIdea && !next.serviceAudience && !next.serviceNextStep && !next.playbackPosition) delete this.data.files[id];
     else this.data.files[id] = next;
     this.schedule();
     return next;
@@ -53,11 +85,13 @@ class Store {
 
   setChapter(id, patch) {
     const current = this.chapter(id);
+    const points = learningPoints(current, patch);
     const next = {
       complete: Boolean(patch.complete ?? current.complete),
-      note: typeof patch.note === 'string' ? patch.note.slice(0, 8000) : current.note
+      note: typeof patch.note === 'string' ? patch.note.slice(0, 8000) : current.note,
+      learningPoints: points
     };
-    if (!next.complete && !next.note) delete this.data.chapters[id];
+    if (!next.complete && !next.note && !points.length) delete this.data.chapters[id];
     else this.data.chapters[id] = next;
     this.schedule();
     return next;

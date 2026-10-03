@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { normalizePath } = require('./nextcloud-client.cjs');
-const { isInside } = require('./scanner.cjs');
+const { isInside, fileKind } = require('./scanner.cjs');
 const signature = stat => `${stat.size}:${stat.mtimeMs}`;
 const join = (...parts) => parts.filter(Boolean).join('/');
 const visible = name => !name.startsWith('.');
@@ -84,7 +84,7 @@ async function saveManifest(filename, files) {
   await fs.writeFile(temporary, JSON.stringify({ version: 1, files }), { mode: 0o600 });
   await fs.rename(temporary, filename);
 }
-async function synchronize({ client, localRoot, remotePath, mode = 'both', manifestPath, signal, onProgress = () => {} }) {
+async function synchronize({ client, localRoot, remotePath, mode = 'both', videoMode = 'download', manifestPath, signal, onProgress = () => {}, onVideos = async () => {} }) {
   const root = await fs.realpath(localRoot);
   const remoteRoot = normalizePath(remotePath);
   let records = Object.create(null);
@@ -95,6 +95,13 @@ async function synchronize({ client, localRoot, remotePath, mode = 'both', manif
   onProgress({ phase: 'scanning', current: '', completed: 0, total: 0 });
   const local = await scanLocal(root, signal);
   const remote = await scanRemote(client, remoteRoot, signal);
+  if (videoMode === 'stream') {
+    const videos = [...remote.files].filter(([relative]) => fileKind(relative) === 'video').map(([relative, entry]) => ({ relative, name: entry.name, size: entry.size, modified: entry.modified }));
+    await onVideos(videos);
+    // Streamed videos participate only in the catalog, never in file transfers.
+    for (const relative of [...local.files.keys()]) if (fileKind(relative) === 'video') local.files.delete(relative);
+    for (const relative of [...remote.files.keys()]) if (fileKind(relative) === 'video') remote.files.delete(relative);
+  }
   for (const directory of remote.directories) {
     signal?.throwIfAborted();
     const target = await safeLocal(root, join(directory, '.kursraum-check'), true);

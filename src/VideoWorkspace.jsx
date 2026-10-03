@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FileText, ExternalLink, X, Info, Star, CheckCircle2, Download, Folder } from 'lucide-react';
+import { FileText, ExternalLink, X, Info, Star, CheckCircle2, Download, Folder, BookOpen, Cloud } from 'lucide-react';
 import Preview from './Preview.jsx';
 
 const api = window.kursraum;
 const documentKinds = new Set(['pdf', 'docx', 'text', 'markdown', 'image']);
 
-export default function VideoWorkspace({ file, onClose, onToggleRead, onToggleFavorite, ...playerProps }) {
+export default function VideoWorkspace({ file, onClose, onToggleRead, onToggleFavorite, onReview, ...playerProps }) {
   const split = useRef(null);
   const [ratio, setRatio] = useState(50);
   const [info, setInfo] = useState(false);
@@ -55,8 +55,10 @@ export default function VideoWorkspace({ file, onClose, onToggleRead, onToggleFa
   return <div className="learning-room">
     <header className="learning-toolbar">
       <h2 id="reader-title" title={file.name}>{file.name}</h2>
-      <button type="button" className="companion-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}><FileText size={17} /><span>{open ? 'Begleitmaterial ausblenden' : 'Begleitmaterial öffnen'}</span></button>
+      {file.source === 'nextcloud' && <span className="video-cloud-badge"><Cloud size={16} /> Cloud-Stream</span>}
+      <button type="button" className="companion-toggle" aria-label={open ? 'Begleitmaterial ausblenden' : 'Begleitmaterial öffnen'} aria-expanded={open} onClick={() => setOpen(value => !value)}><FileText size={17} /><span>{open ? 'Begleitmaterial ausblenden' : 'Begleitmaterial öffnen'}</span></button>
       {open && <label className="split-setting">Aufteilung<input aria-label="Breite des Videos" type="range" min="25" max="75" value={ratio} onChange={e => setRatio(Number(e.target.value))} /></label>}
+      <button type="button" onClick={onReview}><BookOpen size={17} /> Reflexion</button>
       <button className="icon-button" title="Dateiinformationen und Aktionen" aria-label="Dateiinformationen" aria-expanded={info} onClick={() => setInfo(v => !v)}><Info size={19} /></button>
       <button className="icon-button" aria-label="Vorschau schließen" onClick={onClose}><X size={21} /></button>
     </header>
@@ -64,9 +66,9 @@ export default function VideoWorkspace({ file, onClose, onToggleRead, onToggleFa
       <span>{(file.size / 1024 / 1024).toLocaleString('de-DE', { maximumFractionDigits: 1 })} MB · {new Date(file.modified).toLocaleDateString('de-DE')}</span>
       <button onClick={onToggleRead}><CheckCircle2 size={16} />{file.state?.read ? 'Gelesen' : 'Als gelesen'}</button>
       <button onClick={onToggleFavorite}><Star size={16} />{file.state?.favorite ? 'Favorit entfernen' : 'Favorit'}</button>
-      <button onClick={() => external('download')}><Download size={16} />Speichern</button>
+      {file.source !== 'nextcloud' && <><button onClick={() => external('download')}><Download size={16} />Speichern</button>
       <button onClick={() => external('open')}><ExternalLink size={16} />Extern öffnen</button>
-      <button onClick={() => external('reveal')}><Folder size={16} />Ordner</button>
+      <button onClick={() => external('reveal')}><Folder size={16} />Ordner</button></>}
     </div>}
     <div ref={split} className={`video-workspace ${open ? 'with-documents' : ''}`} style={{ '--video-share': `${ratio}fr`, '--document-share': `${100 - ratio}fr` }}>
       <div className="video-column"><Preview file={file} {...playerProps} /></div>

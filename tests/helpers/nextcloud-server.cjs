@@ -1,4 +1,5 @@
 const http = require('node:http');
+const { parseRange } = require('../../electron/range.cjs');
 const escape = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 async function createServer() {
   let version = 0;
@@ -19,7 +20,7 @@ async function createServer() {
       if (req.headers.authorization !== `Basic ${Buffer.from('karim:app-passwort').toString('base64')}`) { res.writeHead(401).end(); return; }
       if (!req.url.startsWith(prefix)) { res.writeHead(404).end(); return; }
       const name = decodeURIComponent(req.url.slice(prefix.length)).replace(/\/$/, '');
-      calls.push({ method: req.method, name });
+      calls.push({ method: req.method, name, range: req.headers.range });
       const entry = entries.get(name);
       if (req.method === 'PROPFIND') {
         if (!entry) { res.writeHead(404).end(); return; }
@@ -43,7 +44,11 @@ async function createServer() {
         if (!current) { res.writeHead(404).end(); return; }
         if (req.headers['if-match'] !== current.etag) { res.writeHead(412).end(); return; }
         if (hooks.download) { await hooks.download(name, current, req, res); return; }
-        res.writeHead(200, { 'Content-Length': current.data.length, ETag: current.etag }).end(current.data);
+        let range;
+        try { range = parseRange(req.headers.range, current.data.length); }
+        catch { res.writeHead(416, { 'Content-Range': `bytes */${current.data.length}` }).end(); return; }
+        if (range) res.writeHead(206, { 'Content-Length': range.end - range.start + 1, 'Content-Range': `bytes ${range.start}-${range.end}/${current.data.length}`, ETag: current.etag }).end(current.data.subarray(range.start, range.end + 1));
+        else res.writeHead(200, { 'Content-Length': current.data.length, ETag: current.etag }).end(current.data);
       } else res.writeHead(405).end();
     } catch { if (!res.headersSent) res.writeHead(500); res.end(); }
   });

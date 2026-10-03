@@ -9,6 +9,8 @@ import Preview from './Preview.jsx';
 import Reader from './Reader.jsx';
 import VideoWorkspace from './VideoWorkspace.jsx';
 import NextcloudDialog from './NextcloudDialog.jsx';
+import ReflectionDialog from './ReflectionDialog.jsx';
+import ReflectionsView from './ReflectionsView.jsx';
 const RoadmapView = lazy(() => import('./roadmap/RoadmapView.jsx'));
 
 const api = window.kursraum;
@@ -46,7 +48,7 @@ function MaterialRow({ file, courseName, onOpen, onToggleFavorite }) {
   return <div className="material-row">
     <button type="button" className="material-open" onClick={() => onOpen(file)} aria-label={`${file.name} ansehen`}>
       <span className={`material-icon kind-${file.kind}`}><Icon size={21} strokeWidth={1.8} /></span>
-      <span className="material-description"><strong title={file.name}>{file.name}</strong><small>{courseName && <>{courseName} · </>}{kindNames[file.kind] || 'Datei'} · {formatBytes(file.size)} · {date.format(new Date(file.modified))}</small></span>
+      <span className="material-description"><strong title={file.name}>{file.name}</strong><small>{courseName && <>{courseName} · </>}{file.source === 'nextcloud' ? 'Cloud-Video' : kindNames[file.kind] || 'Datei'} · {formatBytes(file.size)} · {date.format(new Date(file.modified))}</small></span>
       {file.state?.read && <span className="material-read"><Check size={14} /> Gelesen</span>}
       <ChevronRight className="material-chevron" size={17} />
     </button>
@@ -85,6 +87,7 @@ export default function App() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [reflection, setReflection] = useState(null);
   const [autoPlayVideoId, setAutoPlayVideoId] = useState(null);
   const [filter, setFilter] = useState('all');
   const [searchInput, setSearchInput] = useState('');
@@ -141,7 +144,7 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     const searching = query.length > 0;
-    if (view === 'roadmap' || !overview.root || (!searching && view === 'home') || (!searching && view === 'course' && (!courseId || chapterPath === null))) return () => { alive = false; };
+    if (['roadmap', 'reflections'].includes(view) || !overview.root || (!searching && view === 'home') || (!searching && view === 'course' && (!courseId || chapterPath === null))) return () => { alive = false; };
     setLoading(true);
     let promise;
     if (searching) promise = api.search({ query, kind: filter, page });
@@ -162,7 +165,7 @@ export default function App() {
 
   const shownCourses = useMemo(() => overview.courses.filter(item => normalize(item.name).includes(normalize(query))), [overview.courses, query]);
   const chapter = course?.chapters.find(ch => ch.path === chapterPath);
-  const isSearching = query.length > 0;
+  const isSearching = query.length > 0 && view !== 'reflections';
   const openCourse = id => { setCourseId(id); setChapterPath(null); setView('course'); setSelectedFile(null); setSidebarOpen(false); setSearchInput(''); };
   const openRoadmapCourse = (id, chapter) => { openCourse(id); if (chapter !== undefined) setChapterPath(chapter); };
   const showRoadmaps = () => { setView('roadmap'); setSelectedFile(null); setSearchInput(''); setSidebarOpen(false); };
@@ -176,8 +179,28 @@ export default function App() {
     setItems(current => current.map(item => item.id === file.id ? { ...item, state } : item));
     setSelectedFile(current => current?.id === file.id ? { ...current, state } : current);
   };
-  const updateFile = (file, field) => handleError(() => saveFileState(file, { [field]: !file.state?.[field] }));
-  const markVideoWatched = file => file.state?.read ? Promise.resolve() : saveFileState(file, { read: true });
+  const requestReflection = (target, completing = false) => new Promise(resolve => setReflection({ target, completing, resolve }));
+  const fileTarget = file => ({ ...file, type: 'file', courseName: file.courseName || overview.courses.find(item => item.id === file.courseId)?.name });
+  const completeFile = async file => {
+    if (file.kind === 'video' && ((file.state?.learningPoints?.length || 0) < 2 || !file.state?.serviceIdea?.trim())) return requestReflection(fileTarget(file), true);
+    await saveFileState(file, { read: true });
+    return true;
+  };
+  const updateFile = (file, field) => handleError(() => field === 'read' && !file.state?.read ? completeFile(file) : saveFileState(file, { [field]: !file.state?.[field] }));
+  const markVideoWatched = file => completeFile(file);
+  const closeReflection = () => { reflection.resolve(false); setReflection(null); };
+  const saveReflection = async values => {
+    const { target, completing, resolve } = reflection;
+    if (target.type === 'file') await saveFileState(target, { ...values, ...(completing ? { read: true } : {}) });
+    else {
+      const state = await api.setChapterState(target.courseId, target.chapterPath, { ...values, ...(completing ? { complete: true } : {}) });
+      setCourse(current => current?.id === target.courseId ? { ...current, chapters: current.chapters.map(ch => ch.path === target.chapterPath ? { ...ch, state } : ch) } : current);
+    }
+    setReload(value => value + 1);
+    setReflection(null);
+    resolve(true);
+  };
+  const reviewFile = file => { void requestReflection(fileTarget(file)); };
   const playNextVideo = useCallback(file => {
     setAutoPlayVideoId(file.id);
     setSelectedFile(file);
@@ -203,6 +226,7 @@ export default function App() {
         <button type="button" className={`nav-item ${view === 'home' ? 'selected' : ''}`} onClick={() => { setView('home'); setSearchInput(''); setSidebarOpen(false); }}><LayoutGrid size={18} /> Alle Kurse <span>{overview.courses.length}</span></button>
         <button type="button" className={`nav-item ${view === 'favorites' ? 'selected' : ''}`} onClick={() => { setView('favorites'); setSearchInput(''); setSidebarOpen(false); }}><Star size={18} /> Favoriten</button>
         <button type="button" className={`nav-item ${view === 'roadmap' ? 'selected' : ''}`} onClick={showRoadmaps}><Route size={18} /> Roadmaps</button>
+        <button type="button" className={`nav-item ${view === 'reflections' ? 'selected' : ''}`} onClick={() => { setView('reflections'); setSelectedFile(null); setSearchInput(''); setSidebarOpen(false); }}><BookOpen size={18} /> Reflexion & Ideen</button>
         <div className="sidebar-divider" />
         <div className="nav-label nav-label-row"><span>MEINE KURSE</span><span>{overview.courses.length}</span></div>
         {overview.courses.map((item, index) => <button type="button" className={`course-nav ${view === 'course' && item.id === courseId ? 'selected' : ''}`} key={item.id} onClick={() => openCourse(item.id)}>
@@ -215,8 +239,8 @@ export default function App() {
 
     {sidebarOpen && <button className="mobile-scrim" aria-label="Menü schließen" onClick={() => setSidebarOpen(false)} />}
     <div className="app-main">
-      <header className="topbar"><div className="topbar-leading"><button className="icon-button menu-toggle" aria-label="Menü öffnen" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button><span className="breadcrumb"><button onClick={() => { setView('home'); setSearchInput(''); }}>Bibliothek</button>{view === 'course' && <><ChevronRight size={15} /><span title={course?.name}>{course?.name || 'Kurs'}</span></>}{view === 'roadmap' && <><ChevronRight size={15} /><span>Roadmaps</span></>}{view === 'favorites' && <><ChevronRight size={15} /><span>Favoriten</span></>}</span></div>
-        <div className="topbar-actions"><label className="search-box"><Search size={18} /><input type="search" placeholder="Kurse & Dateien suchen …" aria-label="Kurse und Dateien suchen" value={searchInput} onChange={e => setSearchInput(e.target.value)} />{searchInput && <button aria-label="Suche leeren" onClick={() => setSearchInput('')}><X size={15} /></button>}</label>
+      <header className="topbar"><div className="topbar-leading"><button className="icon-button menu-toggle" aria-label="Menü öffnen" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button><span className="breadcrumb"><button onClick={() => { setView('home'); setSearchInput(''); }}>Bibliothek</button>{view === 'course' && <><ChevronRight size={15} /><span title={course?.name}>{course?.name || 'Kurs'}</span></>}{view === 'roadmap' && <><ChevronRight size={15} /><span>Roadmaps</span></>}{view === 'favorites' && <><ChevronRight size={15} /><span>Favoriten</span></>}{view === 'reflections' && <><ChevronRight size={15} /><span>Reflexion & Ideen</span></>}</span></div>
+        <div className="topbar-actions">{view !== 'reflections' && <label className="search-box"><Search size={18} /><input type="search" placeholder="Kurse & Dateien suchen …" aria-label="Kurse und Dateien suchen" value={searchInput} onChange={e => setSearchInput(e.target.value)} />{searchInput && <button aria-label="Suche leeren" onClick={() => setSearchInput('')}><X size={15} /></button>}</label>}
           <button className={`icon-button refresh-button ${overview.scanning ? 'spinning' : ''}`} title="Ordner neu scannen" aria-label="Ordner neu scannen" disabled={!overview.root || overview.scanning} onClick={() => handleError(() => api.rescan())}><RotateCw size={18} /></button>
           <button className="icon-button" title="Einstellungen" aria-label="Einstellungen" onClick={() => setSettingsOpen(true)}><Settings2 size={19} /></button>
         </div></header>
@@ -225,6 +249,7 @@ export default function App() {
       {error && <div className="error-bar" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Fehler schließen"><X size={17} /></button></div>}
       {roadmapRoute && view === 'course' && <div className="roadmap-route-bar"><button onClick={showRoadmaps}>Zur Roadmap</button><strong>{roadmapRoute.title} · Schritt {roadmapRoute.index + 1} / {roadmapRoute.courseIds.length}</strong><button disabled={roadmapRoute.index === 0} onClick={() => { const next = { ...roadmapRoute, index: roadmapRoute.index - 1 }; setRoadmapRoute(next); openCourse(next.courseIds[next.index]); }}>Zurück</button><button disabled={roadmapRoute.index >= roadmapRoute.courseIds.length - 1} onClick={() => { const next = { ...roadmapRoute, index: roadmapRoute.index + 1 }; setRoadmapRoute(next); openCourse(next.courseIds[next.index]); }}>Nächster Kurs</button><button aria-label="Lernpfad beenden" onClick={() => setRoadmapRoute(null)}><X size={16} /></button></div>}
       <div className="workspace"><main className={`content-area ${view === 'roadmap' ? 'roadmap-content' : ''}`}>
+        {overview.root && view === 'reflections' && <ReflectionsView root={overview.root} revision={reload} onEdit={target => { void requestReflection(target); }} onOpenVideo={openFile} />}
         {view === 'roadmap' && <Suspense fallback={<div className="preview-placeholder">Roadmaps werden geladen …</div>}><RoadmapView courses={overview.courses} revision={reload} settings={settings} onSetting={updateSetting} activeId={roadmapId} onActiveId={setRoadmapId} onOpenCourse={openRoadmapCourse} onStartPath={route => { setRoadmapRoute(route); openCourse(route.courseIds[0]); }} /></Suspense>}
         {view !== 'roadmap' && !overview.root && <div className="welcome"><div className="welcome-art"><BookOpen size={64} strokeWidth={1.2} /><span className="welcome-art-ring" /></div><span className="eyebrow">DEIN WISSEN. DEIN ORT.</span><h1>Alle deine Kurse.<br /><span>An einem Ort.</span></h1><p>Wähle einmal deinen Ordner „Kurse“. Wir machen aus deiner vorhandenen Ordnerstruktur eine übersichtliche Lernplattform. Optional verbindest du deine Kurse direkt mit Nextcloud.</p><button className="primary-button" onClick={pickRoot}><FolderOpen size={18} /> Kursordner auswählen <ChevronRight size={17} /></button><button type="button" className="cloud-welcome-button" onClick={() => setNextcloudOpen(true)}><Cloud size={18} /> Mit Nextcloud verbinden</button><div className="welcome-foot">Offline lernen · Nextcloud optional · Jederzeit wechselbar</div></div>}
         {view !== 'roadmap' && overview.root && isSearching && <><div className="page-heading compact"><span className="eyebrow">BIBLIOTHEK DURCHSUCHEN</span><h1>Suchergebnisse</h1><p>„{query}“ in Kursen, Kapiteln und Dateinamen</p></div><FileFilters value={filter} onChange={setFilter} /><MaterialList title="Passende Materialien" subtitle={`${number.format(shownCourses.length)} passende Kurse · Dateinamen und Kapitelpfade`} items={items} total={total} loading={loading} onOpen={openFile} onToggleFavorite={file => updateFile(file, 'favorite')} onMore={() => setPage(n => n + 1)} />{shownCourses.length > 0 && <section className="search-courses"><h2>Passende Kurse</h2><div className="course-grid">{shownCourses.map((item, i) => <CourseCard key={item.id} course={item} index={i} onClick={() => openCourse(item.id)} />)}</div></section>}</>}
@@ -243,11 +268,12 @@ export default function App() {
       </main>
       {selectedFile?.kind === 'video' ? <Reader video onClose={() => setSelectedFile(null)}>
         <VideoWorkspace key={selectedFile.courseId} file={selectedFile} autoPlay={autoPlayVideoId === selectedFile.id}
-          onWatched={markVideoWatched} onNext={playNextVideo} onClose={() => setSelectedFile(null)}
+          reflectionOpen={Boolean(reflection)} onReview={() => reviewFile(selectedFile)} onWatched={markVideoWatched} onNext={playNextVideo} onClose={() => setSelectedFile(null)}
           onToggleRead={() => updateFile(selectedFile, 'read')} onToggleFavorite={() => updateFile(selectedFile, 'favorite')} />
       </Reader> : selectedFile && <Reader video={selectedFile.kind === 'video'} onClose={() => setSelectedFile(null)}><div className="reader-top"><span className="eyebrow">{selectedFile.kind === 'video' ? 'VIDEO ANSEHEN' : 'MATERIAL ANSEHEN'}</span><button className="icon-button" onClick={() => setSelectedFile(null)} aria-label="Vorschau schließen"><X size={20} /></button></div><div className="reader-heading"><div className={`material-icon kind-${selectedFile.kind}`}>{React.createElement(kindIcons[selectedFile.kind] || FileIcon, { size: 22 })}</div><div><h2 id="reader-title" title={selectedFile.name}>{selectedFile.name}</h2><p>{kindNames[selectedFile.kind]} · {formatBytes(selectedFile.size)} · {date.format(new Date(selectedFile.modified))}</p></div></div><div className="reader-actions"><button className={selectedFile.state?.read ? 'active' : ''} onClick={() => updateFile(selectedFile, 'read')} title="Als gelesen markieren"><CheckCircle2 size={17} /> {selectedFile.state?.read ? 'Gelesen' : 'Als gelesen'}</button><button className={selectedFile.state?.favorite ? 'active' : ''} onClick={() => updateFile(selectedFile, 'favorite')} title="Favorit"><Star size={17} fill={selectedFile.state?.favorite ? 'currentColor' : 'none'} /></button><button onClick={() => action('download', selectedFile)} title="Herunterladen / Kopie speichern"><Download size={17} /></button><button onClick={() => action('open', selectedFile)} title="In Standard-App öffnen"><ExternalLink size={17} /></button></div><div className="reader-body"><Preview file={selectedFile} /></div><div className="reader-footer"><button onClick={() => action('reveal', selectedFile)}><Folder size={16} /> Im Ordner anzeigen</button><span>Lokale Datei</span></div></Reader>}
       </div>
     </div>
+    {reflection && <ReflectionDialog target={reflection.target} completing={reflection.completing} onSave={saveReflection} onClose={closeReflection} />}
     {nextcloudOpen && <NextcloudDialog status={nextcloud} localRoot={overview.root} onStatus={setNextcloud}
       onConfigured={() => { setView('home'); setCourseId(null); setSelectedFile(null); setSearchInput(''); setReload(value => value + 1); }} onClose={() => setNextcloudOpen(false)} />}
     {settingsOpen && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><div className="settings-modal" role="dialog" aria-modal="true" aria-label="Einstellungen"><div className="modal-heading"><div><span className="eyebrow">DEIN KURSRAUM</span><h2>Einstellungen</h2></div><button className="icon-button" onClick={() => setSettingsOpen(false)} aria-label="Schließen"><X size={20} /></button></div><div className="setting-block"><h3>Darstellung</h3><p>Wähle ein angenehmes Erscheinungsbild.</p><div className="theme-options"><button className={settings.theme === 'dark' ? 'selected' : ''} onClick={() => updateSetting('theme', 'dark')}><Moon size={20} /> Dunkel</button><button className={settings.theme === 'light' ? 'selected' : ''} onClick={() => updateSetting('theme', 'light')}><Sun size={20} /> Hell</button></div></div><div className="setting-block"><h3>Schriftgröße</h3><p>Gilt für die Benutzeroberfläche.</p><input aria-label="Schriftgröße" type="range" min="0.85" max="1.3" step="0.05" value={settings.fontScale} onChange={e => updateSetting('fontScale', Number(e.target.value))} /><span>{Math.round(settings.fontScale * 100)} %</span></div><div className="setting-block"><h3>Nextcloud</h3><p>Kursdateien direkt mit deiner Nextcloud synchronisieren.</p><button type="button" className="cloud-secondary" onClick={() => { setSettingsOpen(false); setNextcloudOpen(true); }}><Cloud size={18} /> Nextcloud einrichten</button></div><div className="setting-block"><h3>Sprache</h3><p>Deutsch · weitere Sprachen sind derzeit nicht verfügbar.</p></div><div className="setting-local"><HardDrive size={18} /> Offline verfügbar · Notizen bleiben auf diesem Gerät.</div></div></div>}

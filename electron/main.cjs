@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { Readable } = require('node:stream');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { fileURLToPath } = require('node:url');
 const { Store } = require('./store.cjs');
 const { RoadmapManager } = require('./roadmap-manager.cjs');
@@ -38,6 +39,10 @@ function registerMediaProtocol() {
       if (url.hostname !== 'resource' || !/^\/[a-f0-9]{64}$/.test(url.pathname) || !['GET', 'HEAD'].includes(request.method))
         return new Response('Not found', { status: 404 });
       const id = url.pathname.slice(1);
+      if (library.fileById.get(id)?.source === 'nextcloud') {
+        if (url.searchParams.get('thumbnail') === '1') return new Response('Not found', { status: 404 });
+        return await nextcloud.streamVideo(id, request);
+      }
       const { absolute, file, stat } = await library.resolveFile(id);
       if (url.searchParams.get('thumbnail') === '1') {
         if (!['.png', '.jpg', '.jpeg', '.webp'].includes(path.extname(file.name).toLowerCase()) || stat.size > 16 * 1024 * 1024) return new Response('Not found', { status: 404 });
@@ -68,7 +73,7 @@ function registerMediaProtocol() {
       return new Response(Readable.toWeb(fs.createReadStream(absolute, { start, end })), { status: range ? 206 : 200, headers });
     } catch (error) {
       console.warn('Medienzugriff verweigert:', error.message);
-      return new Response('Not found', { status: 404 });
+      return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
     }
   });
 }
@@ -82,6 +87,7 @@ function registerIpc() {
     return choice.canceled || !choice.filePaths[0] ? null : nextcloud.chooseLocal(choice.filePaths[0]);
   });
   ipcMain.handle('nextcloud:configure', (_event, options) => nextcloud.configure(options));
+  ipcMain.handle('nextcloud:videoMode', (_event, mode) => nextcloud.setVideoMode(mode));
   ipcMain.handle('nextcloud:sync', () => nextcloud.start());
   ipcMain.handle('nextcloud:cancel', () => nextcloud.cancel());
   ipcMain.handle('nextcloud:disconnect', () => nextcloud.disconnect());
@@ -93,12 +99,15 @@ function registerIpc() {
   ipcMain.handle('library:overview', () => library.overview());
   ipcMain.handle('library:course', (_event, id) => library.course(id));
   ipcMain.handle('library:listFiles', (_event, args) => library.listFiles(args));
+  ipcMain.handle('library:videoProgress', (_event, id) => library.videoProgress(id));
+  ipcMain.handle('library:setVideoProgress', (_event, id, position) => library.setVideoProgress(id, position));
   ipcMain.handle('library:nextVideo', (_event, id) => library.nextVideo(id));
   ipcMain.handle('library:search', (_event, args) => library.search(args));
   ipcMain.handle('library:favorites', (_event, args) => library.favorites(args));
   ipcMain.handle('library:rescan', async () => { await library.rescan(); return library.overview(); });
-  ipcMain.handle('library:setFileState', (_event, id, patch) => library.setFileState(id, patch));
-  ipcMain.handle('library:setChapterState', (_event, courseId, chapterPath, patch) => library.setChapterState(courseId, chapterPath, patch));
+  ipcMain.handle('library:reflections', () => library.reflections());
+  ipcMain.handle('library:setFileState', (_event, id, patch) => library.persistState(() => library.setFileState(id, patch)));
+  ipcMain.handle('library:setChapterState', (_event, courseId, chapterPath, patch) => library.persistState(() => library.setChapterState(courseId, chapterPath, patch)));
   ipcMain.handle('settings:get', () => store.settings());
   ipcMain.handle('settings:set', (_event, key, value) => store.setSetting(key, value));
   ipcMain.handle('library:download', async (_event, id) => {
@@ -153,7 +162,25 @@ function createWindow() {
   });
   if (devUrl) void window.loadURL(devUrl);
   else void window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-  window.on('closed', () => { window = null; });
+  const playerWindow = window;
+  let closeAllowed = false, closeToken = null;
+  const progressFlushed = (event, token, saved) => {
+    if (event.sender !== playerWindow.webContents || token !== closeToken) return;
+    closeToken = null;
+    if (saved) { closeAllowed = true; playerWindow.close(); }
+  };
+  ipcMain.on('video:progressFlushed', progressFlushed);
+  playerWindow.on('close', event => {
+    if (closeAllowed || playerWindow.webContents.isCrashed() || playerWindow.webContents.isLoadingMainFrame()) return;
+    event.preventDefault();
+    if (closeToken) return;
+    closeToken = randomUUID();
+    playerWindow.webContents.send('video:flushProgress', closeToken);
+  });
+  playerWindow.on('closed', () => {
+    ipcMain.removeListener('video:progressFlushed', progressFlushed);
+    window = null;
+  });
 }
 
 app.whenReady().then(async () => {
@@ -165,7 +192,7 @@ app.whenReady().then(async () => {
   nextcloud = new Nextcloud({ store, library, safeStorage, dataDirectory: app.getPath('userData'), emit: message => {
     if (window && !window.isDestroyed()) window.webContents.send('library:event', message);
   } });
-  nextcloud.initialize();
+  await nextcloud.initialize();
   const { default: ElectronStore } = await import('electron-store');
   const roadmaps = new RoadmapManager(new ElectronStore({ name: 'kursraum-roadmaps', defaults: { roadmaps: {} } }), library,
     message => { if (window && !window.isDestroyed()) window.webContents.send('library:event', message); });
@@ -185,6 +212,7 @@ app.on('before-quit', event => {
   quitting = true;
   void (async () => {
     await nextcloud.close();
+    await library.stateWrites.catch(() => {});
     await Promise.allSettled([library.close(), store.flush()]);
   })().finally(() => app.quit());
 });

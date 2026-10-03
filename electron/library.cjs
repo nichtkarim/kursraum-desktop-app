@@ -3,6 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const chokidar = require('chokidar');
 const { scanTree, fileKind, isInside, relPath } = require('./scanner.cjs');
+const { normalizePath } = require('./nextcloud-client.cjs');
 
 const collator = new Intl.Collator('de', { numeric: true, sensitivity: 'base' });
 const naturalCompare = (a, b) => collator.compare(a, b);
@@ -16,6 +17,7 @@ class CourseLibrary {
     this.root = null;
     this.dirs = new Set();
     this.files = new Map();
+    this.cloudVideos = { root: null, files: new Map() };
     this.fileById = new Map();
     this.courses = new Map();
     this.watcher = null;
@@ -26,6 +28,7 @@ class CourseLibrary {
     this.error = null;
     this.pendingEvents = new Map();
     this.queue = Promise.resolve();
+    this.stateWrites = Promise.resolve();
     this.rebuildTimer = null;
   }
 
@@ -160,11 +163,33 @@ class CourseLibrary {
     }, 180);
   }
 
+  async setCloudVideos(root, videos = []) {
+    const files = new Map();
+    for (const item of videos.slice(0, 100000)) {
+      try {
+        if (!item || typeof item.relative !== 'string' || normalizePath(item.relative) !== item.relative ||
+            item.relative.split('/').length < 2 || item.relative.split('/').some(part => part.startsWith('.')) ||
+            fileKind(item.relative) !== 'video' || !Number.isSafeInteger(item.size) || item.size < 0) continue;
+        files.set(item.relative, { relative: item.relative, name: item.relative.split('/').at(-1), size: item.size,
+          modified: Number.isFinite(item.modified) ? item.modified : 0, kind: 'video', source: 'nextcloud' });
+      } catch { /* Ignore invalid cached metadata; never turn it into a local path. */ }
+    }
+    this.cloudVideos = { root, files };
+    if (this.root) { await this.rebuildIndex(); this.emitChanged(); }
+  }
+
   async rebuildIndex() {
     const courses = new Map();
     const byName = new Map();
     const fileById = new Map();
-    for (const dir of this.dirs) {
+    const indexedFiles = new Map(this.files);
+    const indexedDirs = new Set(this.dirs);
+    if (this.cloudVideos.root === this.root) for (const [relative, file] of this.cloudVideos.files) {
+      indexedFiles.set(relative, file);
+      const parts = relative.split('/');
+      for (let length = 1; length < parts.length; length++) indexedDirs.add(parts.slice(0, length).join('/'));
+    }
+    for (const dir of indexedDirs) {
       if (!dir || dir.includes('/')) continue;
       const id = idFor(this.root, 'course', dir);
       const course = { id, name: dir, description: '', coverId: null, fileCount: 0,
@@ -172,7 +197,7 @@ class CourseLibrary {
       courses.set(id, course);
       byName.set(dir, course);
     }
-    for (const dir of this.dirs) {
+    for (const dir of indexedDirs) {
       const [top, ...rest] = dir.split('/');
       if (!rest.length) continue;
       const course = byName.get(top);
@@ -183,7 +208,7 @@ class CourseLibrary {
         fileCount: 0, parentPath: rest.slice(0, -1).join('/')
       });
     }
-    for (const item of this.files.values()) {
+    for (const item of indexedFiles.values()) {
       const [top, ...rest] = item.relative.split('/');
       const course = byName.get(top);
       if (!course || !rest.length) continue;
@@ -303,8 +328,73 @@ class CourseLibrary {
     return { total: items.length, page, pageSize: 60, items: items.slice(page * 60, (page + 1) * 60) };
   }
 
+  reflections() {
+    const entries = [];
+    for (const course of this.overview().courses) {
+      for (const file of this.courses.get(course.id).files) {
+        const state = this.store.file(file.id);
+        if (state.learningPoints?.length || state.serviceIdea) entries.push({ ...this.publicFile(file), type: 'file', courseName: course.name });
+      }
+      for (const chapter of this.course(course.id).chapters) {
+        if (chapter.state.learningPoints?.length) entries.push({ type: 'chapter', id: `${course.id}:${chapter.path}`,
+          name: chapter.name, courseId: course.id, courseName: course.name, chapterPath: chapter.path, state: chapter.state });
+      }
+    }
+    return entries.sort((a, b) => naturalCompare(`${a.courseName}/${a.chapterPath}/${a.name}`, `${b.courseName}/${b.chapterPath}/${b.name}`));
+  }
+
+  persistState(update) {
+    // Serialize IPC writes so a failed save cannot undo a later successful edit.
+    const write = this.stateWrites.catch(() => {}).then(async () => {
+      const files = { ...this.store.data.files };
+      const chapters = { ...this.store.data.chapters };
+      try {
+        const state = update();
+        await this.store.flush();
+        return state;
+      } catch (error) {
+        this.store.data.files = files;
+        this.store.data.chapters = chapters;
+        this.emitChanged();
+        throw error;
+      }
+    });
+    this.stateWrites = write;
+    return write;
+  }
+
+  async videoProgress(id) {
+    // A reopened player must see the last write, even if its list item is stale.
+    await this.stateWrites.catch(() => {});
+    if (this.fileById.get(id)?.kind !== 'video') throw new Error('Video nicht gefunden.');
+    const position = this.store.file(id).playbackPosition;
+    return Number.isFinite(position) && position >= 0 ? position : 0;
+  }
+
+  setVideoProgress(id, position) {
+    return this.persistState(() => {
+      if (this.fileById.get(id)?.kind !== 'video') throw new Error('Video nicht gefunden.');
+      if (!Number.isFinite(position) || position < 0) throw new Error('Ungültige Videoposition.');
+      // Progress does not change completion or trigger a full library reload.
+      this.store.setFile(id, { playbackPosition: position });
+      return position;
+    });
+  }
+
   setFileState(id, patch = {}) {
-    if (!this.fileById.has(id)) throw new Error('Datei nicht gefunden.');
+    const file = this.fileById.get(id);
+    if (!file) throw new Error('Datei nicht gefunden.');
+    const current = this.store.file(id);
+    // Reflection is required only for videos, including manual completion and edits.
+    const editsReflection = ['learningPoints', 'serviceIdea', 'serviceAudience', 'serviceNextStep'].some(key => Object.hasOwn(patch, key));
+    if (file.kind === 'video' && (patch.read || editsReflection)) {
+      const points = Object.hasOwn(patch, 'learningPoints') ? patch.learningPoints : current.learningPoints;
+      if (!Array.isArray(points) || points.filter(point => typeof point === 'string' && point.trim()).length < 2) {
+        throw new Error('Halte mindestens zwei Lernpunkte zum Video fest.');
+      }
+      const idea = Object.hasOwn(patch, 'serviceIdea') ? patch.serviceIdea : current.serviceIdea;
+      if (typeof idea !== 'string' || !idea.trim()) throw new Error('Beschreibe mindestens eine mögliche Dienstleistungsidee zum Video.');
+    }
     const state = this.store.setFile(id, patch);
     this.emitChanged();
     return state;
@@ -323,6 +413,7 @@ class CourseLibrary {
     if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw new Error('Ungültige Datei-ID.');
     const file = this.fileById.get(id);
     if (!file || !this.root) throw new Error('Datei nicht gefunden.');
+    if (file.source === 'nextcloud') throw new Error('Dieses Video wird direkt aus Nextcloud gestreamt und ist nicht als lokale Datei verfügbar.');
     const absolute = path.join(this.root, ...file.relative.split('/'));
     if (!isInside(this.root, absolute)) throw new Error('Ungültiger Dateipfad.');
     const [real, stat, linkStat] = await Promise.all([fs.realpath(absolute), fs.stat(absolute), fs.lstat(absolute)]);

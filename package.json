@@ -13,7 +13,11 @@
     "dist": "npm run build && electron-builder",
     "test": "node --test tests/*.test.cjs",
     "dist:deb": "npm run build && electron-builder --linux deb --x64 --publish never",
-    "test:roadmap:ui": "npm run build && node tests/ui/roadmap.cjs"
+    "test:video-progress:ui": "npm run build && node tests/ui/video-progress.cjs",
+    "test:companion:ui": "npm run build && node tests/ui/companion.cjs",
+    "test:cloud:ui": "npm run build && node tests/ui/cloud-video.cjs",
+    "test:reflections:ui": "npm run build && node tests/ui/reflections.cjs",
+    "test:roadmap:ui": "npm run build && node tests/ui/roadmap.cjs && node tests/ui/roadmap-stability.cjs"
   },
   "engines": {
     "node": ">=20"

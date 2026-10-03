@@ -41,7 +41,9 @@ function sanitize(input) {
     return { id: node.id, courseId: typeof node.courseId === 'string' && /^[a-f0-9]{64}$/.test(node.courseId) ? node.courseId : '',
       courseName: text(node.courseName), position: { x: coordinate(node.position?.x), y: coordinate(node.position?.y) },
       goal: text(node.goal, 1500), notes: text(node.notes, 8000), duration: Number.isFinite(node.duration) ? Math.max(0, Math.min(100000, Math.round(node.duration))) : 0,
-      required: node.required !== false, milestone: node.milestone === true, checkpoint: node.checkpoint === true, startDate, expanded: node.expanded === true };
+      required: node.required !== false, milestone: node.milestone === true, checkpoint: node.checkpoint === true, startDate, expanded: node.expanded === true,
+      prerequisiteMode: ['and', 'or', 'xor'].includes(node.prerequisiteMode) ? node.prerequisiteMode : 'and',
+      prerequisiteChoice: validId(node.prerequisiteChoice) ? node.prerequisiteChoice : '' };
   });
   const edgeIds = new Set(); const pairs = new Set();
   const edges = input.edges.map(edge => {
@@ -52,6 +54,11 @@ function sanitize(input) {
     return { id: edge.id, source: edge.source, target: edge.target, label: text(edge.label, 150) };
   });
   topological(nodes, edges);
+  for (const node of nodes) {
+    if (node.prerequisiteChoice && !edges.some(edge => edge.target === node.id && edge.source === node.prerequisiteChoice)) {
+      throw new Error('Die gewählte Alternative muss direkt mit dem Zielkurs verbunden sein.');
+    }
+  }
   const route = Array.isArray(input.route) ? input.route.filter(id => ids.has(id)) : [];
   if (new Set(route).size !== route.length || route.some((id, i) => i && !pairs.has(`${route[i - 1]}:${id}`))) throw new Error('Der markierte Pfad muss verbunden sein.');
   return { title, nodes, edges, route, viewport: { x: coordinate(input.viewport?.x), y: coordinate(input.viewport?.y), zoom: Number.isFinite(input.viewport?.zoom) ? Math.max(.15, Math.min(2, input.viewport.zoom)) : 1 } };
@@ -71,7 +78,15 @@ function describe(record, library) {
   const nodesById = new Map(record.nodes.map(n => [n.id, n]));
   const date = new Date();
   const today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  const available = id => { const item = byId.get(id); const node = nodesById.get(id); return item.course && !item.complete && (!node.startDate || node.startDate <= today) && prerequisites.get(id).every(parent => byId.get(parent).complete); };
+  const prerequisitesMet = id => {
+    const parents = prerequisites.get(id);
+    if (!parents.length) return true;
+    const node = nodesById.get(id);
+    if (node.prerequisiteMode === 'or') return parents.some(parent => byId.get(parent).complete);
+    if (node.prerequisiteMode === 'xor' && parents.length > 1) return Boolean(node.prerequisiteChoice && byId.get(node.prerequisiteChoice)?.complete);
+    return parents.every(parent => byId.get(parent).complete);
+  };
+  const available = id => { const item = byId.get(id); const node = nodesById.get(id); return item.course && !item.complete && (!node.startDate || node.startDate <= today) && prerequisitesMet(id); };
   const recommended = order.find(id => nodesById.get(id).required && available(id)) || order.find(available) || null;
   return { statuses, recommended, order };
 }

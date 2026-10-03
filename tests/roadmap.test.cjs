@@ -64,6 +64,33 @@ test('Checkpoints, Startdaten und Pflichtstationen beeinflussen Empfehlungen ohn
  r=manager.save({...r,nodes:r.nodes.map((n,i)=>({...n,startDate:i===0?'2999-01-01':'',milestone:true}))});assert.equal(r.recommended,r.nodes[1].id);
  r=manager.save({...r,nodes:r.nodes.map(n=>({...n,checkpoint:true}))});assert.equal(r.recommended,null);assert.equal(courses[1].readCount,0);
 });
+test('Und, Oder und Entweder oder steuern Voraussetzungen und bleiben beim Export erhalten', () => {
+  const { manager, courses } = fixture();
+  let roadmap = manager.create({ title: 'Alternativen', courseIds: [id(1), id(2), id(3)] });
+  const [first, second, target] = roadmap.nodes;
+  const edges = [{ id: 'first', source: first.id, target: target.id }, { id: 'second', source: second.id, target: target.id }];
+  const nodes = roadmap.nodes.map(n => n.id === second.id ? { ...n, startDate: '2999-01-01' } : n);
+  roadmap = manager.save({ ...roadmap, nodes, edges });
+  assert.equal(roadmap.nodes[2].prerequisiteMode, 'and');
+  assert.equal(roadmap.recommended, null);
+
+  roadmap = manager.save({ ...roadmap, nodes: roadmap.nodes.map(n => n.id === target.id ? { ...n, prerequisiteMode: 'or' } : n) });
+  assert.equal(roadmap.recommended, target.id);
+  roadmap = manager.save({ ...roadmap, nodes: roadmap.nodes.map(n => n.id === target.id ? { ...n, prerequisiteMode: 'xor', prerequisiteChoice: '' } : n) });
+  assert.equal(roadmap.recommended, null);
+  roadmap = manager.save({ ...roadmap, nodes: roadmap.nodes.map(n => n.id === target.id ? { ...n, prerequisiteChoice: first.id } : n) });
+  assert.equal(roadmap.recommended, target.id);
+  roadmap = manager.save({ ...roadmap, nodes: roadmap.nodes.map(n => n.id === target.id ? { ...n, prerequisiteChoice: second.id } : n) });
+  assert.equal(roadmap.recommended, null);
+  courses[1].readCount = 4;
+  assert.equal(manager.get(roadmap.id).recommended, target.id);
+  const exported = manager.export(roadmap.id);
+  const imported = manager.import(exported);
+  assert.equal(imported.nodes[2].prerequisiteMode, 'xor');
+  assert.equal(imported.nodes[2].prerequisiteChoice, second.id);
+  assert.throws(() => manager.save({ ...roadmap, nodes: roadmap.nodes.map(n => n.id === target.id ? { ...n, prerequisiteChoice: 'unknown' } : n) }), /gewählte Alternative/);
+});
+
 test('500 Knoten werden validiert, sortiert und über 500 abgewiesen',()=>{
  const nodes=Array.from({length:500},(_,i)=>({id:`n${i}`,courseName:`Kurs ${i}`,position:{x:i*10,y:0}}));
  const edges=nodes.slice(1).map((n,i)=>({id:`e${i}`,source:nodes[i].id,target:n.id}));
