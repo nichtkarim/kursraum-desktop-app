@@ -2,6 +2,32 @@
 
 Electron-Desktop-App mit React und Vite: Die vorhandene Ordnerstruktur wird zur responsiven Kursbibliothek. **Offline nutzbar, Nextcloud optional.** Du kannst deine lokalen Kursdateien direkt mit einem selbst gewählten Ordner deiner Nextcloud synchronisieren oder Videos auf Wunsch direkt aus Nextcloud streamen.
 
+## Einblicke in die App
+
+Die Aufnahmen stammen aus der laufenden Desktop-App mit den Beispielkursen. Das kurze Video für die Aufnahme wurde eigens als Demo erzeugt.
+
+**Kursübersicht** – alle Kurse und ihr Fortschritt auf einen Blick.
+
+![Kursraum mit vier Kursen in der Bibliothek](docs/screenshots/01-kursuebersicht.jpg)
+
+**Kurs und Kapitel** – Materialien nach Kapiteln und Dateitypen durchsuchen.
+
+![Linux-Kurs mit Kapitelübersicht und Lernmaterialien](docs/screenshots/02-kurs-und-kapitel.jpg)
+
+**Video mit Begleitmaterial** – das Video ansehen und gleichzeitig eine PDF öffnen.
+
+![Videoplayer neben einer PDF mit Shell-Befehlen](docs/screenshots/03-video-mit-begleitmaterial.jpg)
+
+**Reflexion nach einem Video** – zwei Lernpunkte und eine Dienstleistungsidee festhalten.
+
+![Reflexionsformular mit Lernpunkten und Dienstleistungsidee](docs/screenshots/04-reflexion-zum-video.jpg)
+
+**Reflexionen und Ideen** – die Einträge später wiederfinden und bearbeiten.
+
+![Gespeicherte Lernpunkte und Dienstleistungsidee in der Übersicht](docs/screenshots/05-reflexionen-und-ideen.jpg)
+
+Auch die [Roadmap-Ansicht](docs/roadmap/02-graph.png) ist als Aufnahme verfügbar. Die Bilder lassen sich mit `npm run build && node tests/ui/readme-screenshots.cjs` aus einem isolierten Testprofil neu erstellen.
+
 ## Voraussetzungen und Schnellstart
 
 - Node.js **20+** und npm, Windows/macOS/Linux mit Desktop-Umgebung
